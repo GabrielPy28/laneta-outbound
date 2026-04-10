@@ -1,0 +1,12 @@
+# Monorepo: imagen solo incluye backend; reduce contexto en Railway/CI
+frontend
+.git
+**/.venv
+**/venv
+**/__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+backend/.env
+.env

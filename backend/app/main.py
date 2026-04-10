@@ -25,6 +25,10 @@ _cors_list = [
     for o in (_settings.cors_origins or "").split(",")
     if o.strip()
 ]
+# Frontend producción (Vercel)
+_vercel_origin = "https://laneta-outbound.vercel.app"
+if _vercel_origin not in _cors_list:
+    _cors_list.append(_vercel_origin)
 if _cors_list:
     app.add_middleware(
         CORSMiddleware,
