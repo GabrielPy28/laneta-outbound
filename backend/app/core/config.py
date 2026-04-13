@@ -45,12 +45,16 @@ class Settings(BaseSettings):
     )
 
     schedule_hubspot_sync_seconds: int = Field(
-        default=18_000,
-        ge=3_600,
-        le=86_400,
+        default=2_700,  # ← 45 MINUTOS
+        ge=300,         # 5 min mínimo (evita spam)
+        le=86_400,      # 24h máximo
         validation_alias="SCHEDULE_HUBSPOT_SYNC_SECONDS",
-        description="Intervalo entre sync HubSpot + push (seg.). Por defecto 5 h (rango 4–6 h vía env).",
+        description="""Intervalo sync HubSpot (segundos).
+        - Default: 45 min (2,700s)
+        - Min: 5 min (300s) 
+        - Max: 24h (86,400s)"""
     )
+
     schedule_smartlead_active_seconds: int = Field(
         default=3_600,
         ge=120,
