@@ -6,6 +6,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.models.campaign_active import CampaignActive  # noqa: F401
 from app.models.lead import Lead
+from app.models.lead_deal import LeadDeal  # noqa: F401
 from app.models.lead_statistics import LeadStatistics  # noqa: F401
 from app.models.lead_message_history import LeadMessageHistory  # noqa: F401
 

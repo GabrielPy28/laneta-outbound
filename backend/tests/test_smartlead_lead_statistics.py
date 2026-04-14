@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 
 from sqlalchemy import select
 
 from app.models.lead import Lead
+from app.models.lead_deal import LeadDeal
 from app.models.lead_statistics import LeadStatistics
 from app.services.smartlead_lead_statistics import (
     compute_lead_score,
@@ -13,15 +15,33 @@ from app.services.smartlead_lead_statistics import (
     sync_lead_statistics_from_smartlead_export,
 )
 class FakeHubSpotMerge:
-    """Acumula PATCH por contacto (como propiedades mergeadas)."""
+    """Acumula PATCH por contacto (como propiedades mergeadas) y dealstage."""
 
     def __init__(self) -> None:
         self.by_contact: dict[str, dict[str, str]] = {}
+        self.deal_patches: list[tuple[str, dict[str, str]]] = []
 
     def patch_contact_properties(self, contact_id: str, properties: dict[str, str]) -> dict:
         m = self.by_contact.setdefault(contact_id, {})
         m.update(dict(properties))
         return {}
+
+    def get_contact_with_associations(self, contact_id: str, **kwargs: object) -> dict:
+        return {
+            "id": contact_id,
+            "properties": {"firstname": "T", "email": f"{contact_id}@test"},
+            "associations": {"deals": {"results": [{"id": f"d-{contact_id}", "type": "contact_to_deal"}]}},
+        }
+
+    def patch_deal_properties(self, deal_id: str, properties: dict[str, str]) -> dict:
+        self.deal_patches.append((deal_id, dict(properties)))
+        return {
+            "id": deal_id,
+            "properties": {
+                "dealname": "Deal",
+                "dealstage": properties.get("dealstage", ""),
+            },
+        }
 
 
 class FakeExportSmartlead:
@@ -152,6 +172,18 @@ def test_sync_lead_statistics_from_export(sqlite_session) -> None:
     assert by_hs["hs-b"]["reply_type"] == "INTERESTED"
     assert by_hs["hs-b"]["is_qualified"] == "true"
     assert by_hs["hs-b"]["sequence_status"] == "COMPLETED"
+
+    assert r.hubspot_deals_patched == 3
+    assert r.hubspot_deals_failed == 0
+    assert len(hs.deal_patches) == 3
+    stages = Counter(p[1].get("dealstage") for p in hs.deal_patches)
+    assert stages["1340627367"] == 1 and stages["1340627371"] == 2
+
+    ld_a = sqlite_session.get(LeadDeal, lid_a)
+    ld_b = sqlite_session.get(LeadDeal, lid_b)
+    assert ld_a is not None and ld_b is not None
+    assert ld_a.dealstage_name == "Cerrado Ganado"
+    assert ld_b.dealstage_name == "Cerrado Ganado"
 
 
 def test_sync_skips_wrong_campaign(sqlite_session) -> None:

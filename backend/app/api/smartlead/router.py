@@ -90,7 +90,8 @@ def post_push_campaign_leads(
         "`last_event_type`, `engagement_status` por conteos, `reply_type` ← columna `category` "
         "(Interested, Meeting Request, …), `is_qualified` ← `is_interested`. "
         "Con `reply_count` y categoría positiva: `manual-complete` + `sequence_status` completed "
-        "en mismo dominio; Not Interested / Follow Up Later: pause solo ese lead + paused."
+        "en mismo dominio; Not Interested / Follow Up Later: pause solo ese lead + paused. "
+        "Tras cada PATCH de contacto exitoso: actualiza `dealstage` del deal asociado en HubSpot y `lead_deal`."
     ),
 )
 def post_sync_campaign_lead_statistics(
@@ -117,6 +118,9 @@ def post_sync_campaign_lead_statistics(
         hubspot_patched=result.hubspot_patched,
         hubspot_failed=result.hubspot_failed,
         hubspot_skipped_no_contact=result.hubspot_skipped_no_contact,
+        hubspot_deals_patched=result.hubspot_deals_patched,
+        hubspot_deals_failed=result.hubspot_deals_failed,
+        hubspot_deals_skipped_no_deal=result.hubspot_deals_skipped_no_deal,
         hubspot_available=hubspot is not None,
         errors=result.errors,
     )

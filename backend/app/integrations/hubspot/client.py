@@ -9,6 +9,7 @@ from app.integrations.hubspot.constants import CONTACT_SEARCH_PROPERTIES
 # Fijas: no se construyen desde variables de entorno.
 HUBSPOT_CRM_CONTACTS_SEARCH_URL = "https://api.hubapi.com/crm/objects/2026-03/contacts/search"
 HUBSPOT_CRM_CONTACTS_RECORD_BASE_URL = "https://api.hubapi.com/crm/objects/2026-03/contacts"
+HUBSPOT_CRM_DEALS_RECORD_BASE_URL = "https://api.hubapi.com/crm/objects/2026-03/deals"
 
 DEFAULT_SEARCH_LIMIT = 14
 MAX_SEARCH_LIMIT = 100
@@ -112,6 +113,57 @@ class HubSpotClient:
             )
             raise HubSpotClientError(
                 f"HubSpot patch contact failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json() if response.content else {}
+
+    def get_contact_with_associations(
+        self,
+        contact_id: str,
+        *,
+        associations: tuple[str, ...] = ("deal",),
+        properties: tuple[str, ...] = ("firstname", "email"),
+    ) -> dict[str, Any]:
+        """GET contacto + asociaciones. En este portal el parámetro correcto es `associations=deal`."""
+        url = f"{HUBSPOT_CRM_CONTACTS_RECORD_BASE_URL}/{contact_id}"
+        params: list[tuple[str, str]] = []
+        for a in associations:
+            params.append(("associations", a))
+        for p in properties:
+            params.append(("properties", p))
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.get(url, headers=self._headers(), params=params)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot get contact failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def patch_deal_properties(self, deal_id: str, properties: dict[str, str]) -> dict[str, Any]:
+        url = f"{HUBSPOT_CRM_DEALS_RECORD_BASE_URL}/{deal_id}"
+        payload = {"properties": properties}
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.patch(url, headers=self._headers(), json=payload)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot patch deal failed: {response.status_code} — {detail}",
                 status_code=response.status_code,
                 body=response.text,
             )

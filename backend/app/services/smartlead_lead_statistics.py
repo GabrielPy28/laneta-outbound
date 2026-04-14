@@ -15,6 +15,7 @@ from app.integrations.hubspot.client import HubSpotClient, HubSpotClientError
 from app.integrations.smartlead.client import SmartleadClient, SmartleadClientError
 from app.models.lead import Lead
 from app.models.lead_statistics import LeadStatistics
+from app.services.hubspot_lead_deal import merge_deal_sync_into_stats_result, sync_hubspot_deal_stage_for_lead
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,25 @@ def _apply_org_manual_complete(
                 msg = f"HubSpot PATCH sequence_status (complete) {p.email}: {e}"
                 logger.warning(msg)
                 result.errors.append(msg)
+            else:
+                deal_r = sync_hubspot_deal_stage_for_lead(
+                    session,
+                    hubspot,
+                    p,
+                    category=_cell_str(prow.get("category")) if prow is not None else None,
+                    opens=_cell_int(prow.get("open_count")) if prow is not None else None,
+                    clicks=_cell_int(prow.get("click_count")) if prow is not None else None,
+                    replies=_cell_int(prow.get("reply_count")) if prow is not None else None,
+                    last_sequence_step=_sequence_step(prow.get("last_email_sequence_sent"))
+                    if prow is not None
+                    else None,
+                    last_event_type=derive_last_event_type(
+                        _cell_int(prow.get("open_count")) if prow is not None else 0,
+                        _cell_int(prow.get("click_count")) if prow is not None else 0,
+                        _cell_int(prow.get("reply_count")) if prow is not None else 0,
+                    ),
+                )
+                merge_deal_sync_into_stats_result(result, deal_r)
 
 
 @dataclass
@@ -258,6 +278,9 @@ class SmartleadLeadStatisticsSyncResult:
     hubspot_patched: int = 0
     hubspot_failed: int = 0
     hubspot_skipped_no_contact: int = 0
+    hubspot_deals_patched: int = 0
+    hubspot_deals_failed: int = 0
+    hubspot_deals_skipped_no_deal: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -408,6 +431,19 @@ def sync_lead_statistics_from_smartlead_export(
                 msg = f"HubSpot PATCH falló para {lead.email}: {e}"
                 logger.warning(msg)
                 result.errors.append(msg)
+            else:
+                deal_r = sync_hubspot_deal_stage_for_lead(
+                    session,
+                    hubspot,
+                    lead,
+                    category=category,
+                    opens=opens,
+                    clicks=clicks,
+                    replies=replies,
+                    last_sequence_step=last_step,
+                    last_event_type=event_type,
+                )
+                merge_deal_sync_into_stats_result(result, deal_r)
         elif not lead.hubspot_contact_id:
             result.hubspot_skipped_no_contact += 1
 

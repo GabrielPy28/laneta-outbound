@@ -111,7 +111,13 @@ def check_connection() -> None:
 
 
 def create_tables() -> None:
-    from app.models import CampaignActive, Lead, LeadMessageHistory, LeadStatistics  # noqa: F401
+    from app.models import (  # noqa: F401
+        CampaignActive,
+        Lead,
+        LeadDeal,
+        LeadMessageHistory,
+        LeadStatistics,
+    )
 
     Base.metadata.create_all(bind=engine)
 

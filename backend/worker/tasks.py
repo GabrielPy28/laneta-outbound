@@ -93,8 +93,9 @@ def hubspot_sync_and_smartlead_push() -> dict:
 @celery.task(name="worker.tasks.smartlead_active_stats_and_message_history")
 def smartlead_active_stats_and_message_history() -> dict:
     """
-    1) Por cada `campaign_id` distinto en BD entre leads ACTIVE con Smartlead: export CSV → estadísticas.
-    2) Message-history por lead usando el `campaign_id` guardado en la fila.
+    1) Message-history por lead ACTIVE (usa `campaign_id` de la fila) para persistir respuestas antes de pausar/completar.
+    2) Por cada `campaign_id` distinto en BD entre esos leads: export CSV → estadísticas de cada lead y, si aplica,
+       actualización de `dealstage` en HubSpot + fila en `lead_deal`.
 
     La campaña para nuevas altas la define `campaign_active` (no variables de entorno).
     """
@@ -105,12 +106,6 @@ def smartlead_active_stats_and_message_history() -> dict:
     hs = _hubspot_optional()
     db = create_session()
     try:
-        campaign_ids = list_distinct_campaign_ids_for_active_smartlead_leads(db)
-        stats_runs: list[dict[str, object]] = []
-        for cid in campaign_ids:
-            stats = sync_lead_statistics_from_smartlead_export(db, sl, hs, campaign_id=cid)
-            stats_runs.append(asdict(stats))
-
         lead_ids = list_active_smartlead_lead_ids(db)
         history_summaries: list[dict[str, object]] = []
         for lid in lead_ids:
@@ -128,11 +123,18 @@ def smartlead_active_stats_and_message_history() -> dict:
                     "errors": r.errors,
                 }
             )
+
+        campaign_ids = list_distinct_campaign_ids_for_active_smartlead_leads(db)
+        stats_runs: list[dict[str, object]] = []
+        for cid in campaign_ids:
+            stats = sync_lead_statistics_from_smartlead_export(db, sl, hs, campaign_id=cid)
+            stats_runs.append(asdict(stats))
+
         logger.info(
-            "smartlead_active_stats campaign_ids=%s stats_runs=%s active_leads=%s",
+            "smartlead_active_stats message_history_leads=%s campaign_ids=%s stats_runs=%s",
+            len(lead_ids),
             campaign_ids,
             len(stats_runs),
-            len(lead_ids),
         )
         return {
             "ok": True,

@@ -27,6 +27,9 @@ class SmartleadLeadStatisticsSyncResponse(BaseModel):
     hubspot_patched: int
     hubspot_failed: int
     hubspot_skipped_no_contact: int
+    hubspot_deals_patched: int = 0
+    hubspot_deals_failed: int = 0
+    hubspot_deals_skipped_no_deal: int = 0
     hubspot_available: bool = Field(
         description="False si no hay token HubSpot: no se envió PATCH a HubSpot.",
     )

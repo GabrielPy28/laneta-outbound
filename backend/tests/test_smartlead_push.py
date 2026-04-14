@@ -54,6 +54,19 @@ class FakeHubSpotClient:
         self.patches.append((contact_id, dict(properties)))
         return {}
 
+    def get_contact_with_associations(self, contact_id: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "id": contact_id,
+            "properties": {"firstname": "N", "email": f"{contact_id}@test"},
+            "associations": {"deals": {"results": [{"id": f"d-{contact_id}", "type": "contact_to_deal"}]}},
+        }
+
+    def patch_deal_properties(self, deal_id: str, properties: dict[str, str]) -> dict[str, Any]:
+        return {
+            "id": deal_id,
+            "properties": {"dealname": "Deal", "dealstage": properties.get("dealstage", "")},
+        }
+
 
 def test_lead_to_smartlead_maps_standard_and_custom_fields() -> None:
     lead = Lead(
