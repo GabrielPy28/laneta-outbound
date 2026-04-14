@@ -20,4 +20,5 @@ CONTACT_SEARCH_PROPERTIES: tuple[str, ...] = (
     "address",
     "pais",
     "company_size",
+    "campaign_id",
 )

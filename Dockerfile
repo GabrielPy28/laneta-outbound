@@ -1,4 +1,3 @@
-# Contexto: raíz del monorepo (Railway por defecto). Build: docker build -f Dockerfile .
 FROM python:3.11-slim
 
 RUN apt-get update \
@@ -9,6 +8,8 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 ENV PORT=8000
+# Alembic al arrancar (tablas nuevas como lead_deal). Anular con RUN_MIGRATIONS_ON_START=false.
+ENV RUN_MIGRATIONS_ON_START=true
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

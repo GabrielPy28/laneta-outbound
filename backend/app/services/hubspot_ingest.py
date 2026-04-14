@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.integrations.hubspot.client import HubSpotClient, HubSpotClientError
 from app.models.lead import Lead
+from app.services.campaign_active import get_effective_smartlead_campaign_id
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,8 @@ def _apply_hubspot_properties(lead: Lead, props: dict[str, Any], *, hubspot_id: 
 
     if ext := _s(props.get("external_lead_id")):
         lead.external_lead_id = ext
+    if cid := _s(props.get("campaign_id")):
+        lead.campaign_id = cid
 
     for key, attr in (
         ("engagement_status", "engagement_status"),
@@ -134,6 +137,7 @@ def sync_new_leads_from_hubspot(session: Session, client: HubSpotClient) -> HubS
     """
     result = HubSpotNewLeadsSyncResult()
     after: str | None = None
+    fallback_campaign_id = get_effective_smartlead_campaign_id(session)
 
     while True:
         try:
@@ -166,6 +170,8 @@ def sync_new_leads_from_hubspot(session: Session, client: HubSpotClient) -> HubS
                 if existing is None:
                     lead = Lead(email=email, hubspot_contact_id=hubspot_id)
                     _apply_hubspot_properties(lead, props, hubspot_id=hubspot_id)
+                    if not lead.campaign_id:
+                        lead.campaign_id = fallback_campaign_id
                     if not lead.engagement_status:
                         lead.engagement_status = "NEW"
                     session.add(lead)
@@ -179,6 +185,8 @@ def sync_new_leads_from_hubspot(session: Session, client: HubSpotClient) -> HubS
                         result.errors.append(msg)
                         continue
                     _apply_hubspot_properties(lead, props, hubspot_id=hubspot_id)
+                    if not lead.campaign_id:
+                        lead.campaign_id = fallback_campaign_id
                     if not lead.engagement_status:
                         lead.engagement_status = "NEW"
 

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.integrations.hubspot.client import HubSpotClientError
+from app.integrations.smartlead.constants import SMARTLEAD_DEFAULT_CAMPAIGN_ID
 from app.models.lead import Lead
 from app.services import hubspot_ingest as ingest
 from app.services.hubspot_ingest import sync_new_leads_from_hubspot
@@ -69,6 +70,7 @@ def test_sync_creates_lead_and_marks_hubspot(sqlite_session: Session) -> None:
     assert row.hubspot_contact_id == "hs-1"
     assert row.first_name == "Luis"
     assert row.engagement_status == "NEW"
+    assert row.campaign_id == SMARTLEAD_DEFAULT_CAMPAIGN_ID
 
 
 def test_sync_paginates_until_no_after(sqlite_session: Session) -> None:
@@ -157,6 +159,7 @@ def test_apply_hubspot_properties_maps_fields() -> None:
             "hs_email_last_email_name": "Hola",
             "pais": "MX",
             "hs_email_last_open_date": "2026-01-15T10:00:00Z",
+            "campaign_id": "98765",
         },
         hubspot_id="10",
     )
@@ -167,6 +170,7 @@ def test_apply_hubspot_properties_maps_fields() -> None:
     assert lead.last_email_subject == "Hola"
     assert lead.country == "MX"
     assert lead.last_open_date is not None
+    assert lead.campaign_id == "98765"
 
 
 def test_apply_prefers_nombre_ultimo_mensaje_over_hs_email_last_name() -> None:
