@@ -21,6 +21,7 @@ from app.models.lead import Lead
 logger = logging.getLogger(__name__)
 
 GET_LEAD_BY_EMAIL_RETRY_SLEEP_SEC = 2.0
+GET_LEAD_BY_EMAIL_MAX_RETRIES = 10
 
 
 @dataclass
@@ -37,6 +38,68 @@ class SmartleadPushResult:
     hubspot_failed: int = 0
     hubspot_skipped_no_contact: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+def _to_int(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(str(value).strip() or "0")
+    except ValueError:
+        return 0
+
+
+def _extract_post_counts(payload: dict[str, Any]) -> tuple[int, int]:
+    """
+    Smartlead ha usado distintos nombres de campos para el POST de leads:
+    - `added_count` / `skipped_count` (formato antiguo)
+    - `upload_count` y contadores de no-alta (formato actual en docs/UI)
+    """
+    added = _to_int(payload.get("added_count"))
+    if added == 0:
+        added = _to_int(payload.get("upload_count"))
+
+    skipped = _to_int(payload.get("skipped_count"))
+    if skipped == 0:
+        skipped = sum(
+            _to_int(payload.get(k))
+            for k in (
+                "duplicate_count",
+                "invalid_email_count",
+                "already_added_to_campaign",
+                "lead_import_stopped_count",
+                "bounce_count",
+            )
+        )
+        unsubscribed = payload.get("unsubscribed_leads")
+        if isinstance(unsubscribed, list):
+            skipped += len(unsubscribed)
+    return added, skipped
+
+
+def _post_response_diag(payload: dict[str, Any]) -> str:
+    keys = (
+        "ok",
+        "message",
+        "upload_count",
+        "total_leads",
+        "added_count",
+        "skipped_count",
+        "duplicate_count",
+        "invalid_email_count",
+        "already_added_to_campaign",
+        "lead_import_stopped_count",
+        "bounce_count",
+        "is_lead_limit_exhausted",
+    )
+    parts: list[str] = []
+    for k in keys:
+        if k in payload:
+            parts.append(f"{k}={payload.get(k)!r}")
+    unsubscribed = payload.get("unsubscribed_leads")
+    if isinstance(unsubscribed, list):
+        parts.append(f"unsubscribed_leads_len={len(unsubscribed)}")
+    return ", ".join(parts)
 
 
 def _cf_str(key: str, value: Any) -> tuple[str, str] | None:
@@ -146,13 +209,25 @@ def resolve_smartlead_lead_id_for_campaign(
     email: str,
     campaign_id: str,
 ) -> str | None:
-    """GET /leads/?email= — id del lead; opcionalmente valida `lead_campaign_data`."""
+    """
+    GET /leads/?email= — id global del lead en Smartlead.
+    Si existe `lead_campaign_data`, se intenta validar campaña; pero si no coincide y hay `id`,
+    devolvemos el `id` para no perder sincronización por eventual consistency o campañas múltiples.
+    """
     payload = client.get_lead_by_email(email)
     if not payload:
         return None
-    if not _lead_payload_in_campaign(payload, campaign_id):
+    lead_id = _id_from_lead_payload(payload)
+    if not lead_id:
         return None
-    return _id_from_lead_payload(payload)
+    if not _lead_payload_in_campaign(payload, campaign_id):
+        logger.info(
+            "Smartlead lead %s (%s) no reporta campaña %s en lead_campaign_data; se usa id igualmente.",
+            lead_id,
+            email,
+            campaign_id,
+        )
+    return lead_id
 
 
 def push_new_leads_to_smartlead_campaign(
@@ -181,6 +256,7 @@ def push_new_leads_to_smartlead_campaign(
     result.leads_selected = len(leads)
     if not leads:
         return result
+    post_diags: list[str] = []
 
     for i in range(0, len(leads), SMARTLEAD_MAX_LEADS_PER_REQUEST):
         batch = leads[i : i + SMARTLEAD_MAX_LEADS_PER_REQUEST]
@@ -197,22 +273,30 @@ def push_new_leads_to_smartlead_campaign(
             continue
 
         result.batches_posted += 1
-        result.smartlead_added_count += int(resp.get("added_count") or 0)
-        result.smartlead_skipped_count += int(resp.get("skipped_count") or 0)
+        added, skipped = _extract_post_counts(resp)
+        result.smartlead_added_count += added
+        result.smartlead_skipped_count += skipped
+        diag = _post_response_diag(resp) if isinstance(resp, dict) else ""
+        if diag:
+            post_diags.append(diag)
 
     def _resolve_sl_id(lead_email: str) -> str | None:
-        sl_id = resolve_smartlead_lead_id_for_campaign(smartlead, lead_email, campaign_id)
-        if sl_id:
-            return sl_id
-        time.sleep(GET_LEAD_BY_EMAIL_RETRY_SLEEP_SEC)
-        return resolve_smartlead_lead_id_for_campaign(smartlead, lead_email, campaign_id)
+        for attempt in range(GET_LEAD_BY_EMAIL_MAX_RETRIES):
+            sl_id = resolve_smartlead_lead_id_for_campaign(smartlead, lead_email, campaign_id)
+            if sl_id:
+                return sl_id
+            if attempt < GET_LEAD_BY_EMAIL_MAX_RETRIES - 1:
+                time.sleep(GET_LEAD_BY_EMAIL_RETRY_SLEEP_SEC)
+        return None
 
     for lead in leads:
         sl_id = _resolve_sl_id(lead.email)
         if not sl_id:
             result.leads_unresolved += 1
+            diag = " | ".join(post_diags[:2])
             result.errors.append(
                 f"Sin id Smartlead tras GET /leads/?email= para {lead.email} (campaña {campaign_id})."
+                + (f" Respuesta POST: {diag}" if diag else "")
             )
             continue
 

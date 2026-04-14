@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.integrations.hubspot.client import HubSpotClientError
 from app.models.lead import Lead
 from app.services.smartlead_push import (
+    _extract_post_counts,
     lead_to_smartlead_lead_dict,
     push_new_leads_to_smartlead_campaign,
     resolve_smartlead_lead_id_for_campaign,
@@ -41,6 +42,23 @@ class FakeSmartleadClient:
             "email": email,
             "lead_campaign_data": [{"campaign_id": 3154960}],
         }
+
+
+def test_extract_post_counts_supports_new_smartlead_response_shape() -> None:
+    added, skipped = _extract_post_counts(
+        {
+            "ok": True,
+            "upload_count": 1,
+            "duplicate_count": 1,
+            "invalid_email_count": 0,
+            "already_added_to_campaign": 1,
+            "lead_import_stopped_count": 0,
+            "bounce_count": 1,
+            "unsubscribed_leads": ["x@y.com"],
+        }
+    )
+    assert added == 1
+    assert skipped == 4
 
 
 class FakeHubSpotClient:
@@ -102,7 +120,7 @@ def test_resolve_smartlead_rejects_wrong_campaign_in_lead_campaign_data() -> Non
                 "lead_campaign_data": [{"campaign_id": 999}],
             }
 
-    assert resolve_smartlead_lead_id_for_campaign(FakeWithWrongCampaign(), "x@y.com", "3154960") is None
+    assert resolve_smartlead_lead_id_for_campaign(FakeWithWrongCampaign(), "x@y.com", "3154960") == "1"
 
 
 def test_push_updates_db_and_hubspot(sqlite_session: Session) -> None:
@@ -149,3 +167,43 @@ def test_push_skips_hubspot_without_contact_id(sqlite_session: Session) -> None:
     row = sqlite_session.scalar(select(Lead).where(Lead.email == "solo@example.com"))
     assert row is not None
     assert row.smartlead_lead_id is not None
+
+
+def test_push_updates_hubspot_even_if_lead_campaign_data_mismatch(sqlite_session: Session) -> None:
+    sqlite_session.add(
+        Lead(
+            email="multi@example.com",
+            hubspot_contact_id="hs-multi",
+            engagement_status="NEW",
+        )
+    )
+    sqlite_session.commit()
+
+    class FakeSmartleadMultiCampaign:
+        def post_campaign_leads(self, campaign_id: str, body: dict[str, Any]) -> dict[str, Any]:
+            return {"ok": True, "upload_count": 1}
+
+        def get_lead_by_email(self, email: str) -> dict[str, Any]:
+            return {
+                "id": "3609733181",
+                "email": email,
+                "lead_campaign_data": [{"campaign_id": 999999}],
+            }
+
+    hs = FakeHubSpotClient()
+    result = push_new_leads_to_smartlead_campaign(
+        sqlite_session,
+        FakeSmartleadMultiCampaign(),
+        hs,
+        campaign_id="3163578",
+        max_leads=50,
+    )
+
+    row = sqlite_session.scalar(select(Lead).where(Lead.email == "multi@example.com"))
+    assert row is not None
+    assert result.leads_resolved == 1
+    assert row.smartlead_lead_id == "3609733181"
+    assert row.campaign_id == "3163578"
+    assert len(hs.patches) == 1
+    assert hs.patches[0][1]["smartlead_lead_id"] == "3609733181"
+    assert hs.patches[0][1]["campaign_id"] == "3163578"
