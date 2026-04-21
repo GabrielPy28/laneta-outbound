@@ -98,6 +98,49 @@ class HubSpotClient:
             )
         return response.json()
 
+    def search_contacts_by_firstname(
+        self,
+        *,
+        first_name: str,
+        limit: int = MAX_SEARCH_LIMIT,
+        after: str | int | None = None,
+    ) -> dict[str, Any]:
+        """POST contacts/search filtrando por firstname EQ."""
+        url = HUBSPOT_CRM_CONTACTS_SEARCH_URL
+        lim = min(max(int(limit), 1), MAX_SEARCH_LIMIT)
+        after_str = "0" if after is None else str(after).strip() or "0"
+        body: dict[str, Any] = {
+            "after": after_str,
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "operator": "EQ",
+                            "propertyName": "firstname",
+                            "value": str(first_name).strip(),
+                        }
+                    ]
+                }
+            ],
+            "limit": lim,
+            "properties": ["lastname", "firstname", "email", "phone", "lastmodifieddate", "createdate"],
+        }
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.post(url, headers=self._headers(), json=body)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot firstname search failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
     def patch_contact_properties(self, contact_id: str, properties: dict[str, str]) -> dict[str, Any]:
         url = f"{HUBSPOT_CRM_CONTACTS_RECORD_BASE_URL}/{contact_id}"
         payload = {"properties": properties}

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ID_CAMPAIGN", "SMARTLEAD_CAMPAIGN_ID"),
         description="Obsoleto: el ID de campaña para nuevas altas vive en la tabla `campaign_active`.",
     )
+    manychat_api_key: str | None = Field(
+        default=None,
+        validation_alias="MANYCHAT_API_KEY",
+    )
 
     schedule_hubspot_sync_seconds: int = Field(
         default=2_700,  # ← 45 MINUTOS
