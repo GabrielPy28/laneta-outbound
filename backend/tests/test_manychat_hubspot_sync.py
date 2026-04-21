@@ -20,8 +20,10 @@ class FakeHubSpotClient:
     def __init__(self, pages):
         self.pages = pages
         self.patch_calls = []
+        self.search_calls = 0
 
     def search_contacts_by_firstname(self, *, first_name: str, limit: int = 100, after=None):
+        self.search_calls += 1
         if after in (None, "0"):
             return self.pages[0]
         if after == "next-1":
@@ -119,3 +121,36 @@ def test_sync_manychat_to_hubspot_returns_error_when_no_confident_match():
     result = sync_manychat_contact_to_hubspot(id_contact="1", manychat=manychat, hubspot=hubspot)
     assert result.hubspot_updated is False
     assert result.errors
+
+
+def test_sync_manychat_to_hubspot_uses_custom_field_hubspot_id_first():
+    manychat = FakeManychatClient(
+        {
+            "status": "success",
+            "data": {
+                "id": "241842626",
+                "first_name": "Gabriel",
+                "last_name": "Pinero",
+                "live_chat_url": "https://app.manychat.com/fb3029478/chat/241842626",
+                "last_input_text": "Hablar con un asesor",
+                "subscribed": "2026-04-21T11:10:27-06:00",
+                "whatsapp_phone": "+584127823455",
+                "custom_fields": [
+                    {
+                        "id": 14509894,
+                        "name": "hubspot_id",
+                        "type": "text",
+                        "value": "214435535971",
+                    }
+                ],
+            },
+        }
+    )
+    hubspot = FakeHubSpotClient([{"results": []}])
+
+    result = sync_manychat_contact_to_hubspot(id_contact="241842626", manychat=manychat, hubspot=hubspot)
+
+    assert result.hubspot_contact_id == "214435535971"
+    assert result.matched_by == "manychat_custom_field"
+    assert result.hubspot_updated is True
+    assert hubspot.search_calls == 0
