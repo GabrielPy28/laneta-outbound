@@ -87,7 +87,7 @@ def test_sync_manychat_to_hubspot_uses_phone_as_tiebreaker():
     assert patched["id_manychat"] == "1606671242"
     assert patched["whatsapp_chat_url"] == "https://app.manychat.com/chat/1606671242"
     assert patched["last_whatsapp_message"] == "Crear contenidos"
-    assert patched["whatsapp_chat_subscription_date"] == "20/04/2026 16:29"
+    assert patched["whatsapp_chat_subscription_date"] == "1776724199000"
     assert manychat.custom_field_calls[0] == ("1606671242", "hubspot_id", "214435535971")
 
 

@@ -95,7 +95,8 @@ def _format_subscription_date(value: str | None) -> str | None:
     dt = _parse_dt(value)
     if dt is None:
         return None
-    return dt.strftime("%d/%m/%Y %H:%M")
+    # HubSpot datetime properties expect unix epoch in milliseconds (long).
+    return str(int(dt.timestamp() * 1000))
 
 
 def _choose_best_candidate(
