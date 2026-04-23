@@ -1,10 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import DbSession
-from app.api.hubspot.schemas import HubSpotNewLeadsSyncResponse, ManychatHubSpotSyncResponse
+from app.api.hubspot.schemas import (
+    CreateHubSpotCallRequest,
+    CreateHubSpotCallResponse,
+    CreateHubSpotMeetingRequest,
+    CreateHubSpotMeetingResponse,
+    HubSpotCallListItem,
+    HubSpotMeetingListItem,
+    HubSpotNewLeadsSyncResponse,
+    ManychatHubSpotSyncResponse,
+)
 from app.core.config import get_settings
+from app.integrations.google_calendar.client import GoogleCalendarError
 from app.integrations.hubspot.client import HubSpotClient, HubSpotClientError
 from app.integrations.manychat.client import ManychatClient
+from app.services.hubspot_calls import create_call_link_contact, list_calls_with_contact_details
+from app.services.hubspot_meetings import (
+    create_meeting_with_calendar_and_contact,
+    list_meetings_with_contact_details,
+)
 from app.services.hubspot_ingest import sync_new_leads_from_hubspot
 from app.services.manychat_hubspot_sync import sync_manychat_contact_to_hubspot
 
@@ -62,6 +77,161 @@ def post_sync_new_leads(
         hubspot_marked_done=result.hubspot_marked_done,
         hubspot_mark_failed=result.hubspot_mark_failed,
         errors=result.errors,
+    )
+
+
+@router.get(
+    "/calls",
+    response_model=list[HubSpotCallListItem],
+    summary="Listar llamadas asociadas a un contacto",
+    description=(
+        "Recorre todas las páginas (100 por página) del listado de llamadas HubSpot, "
+        "filtra las que tienen `associations.contacts`, y devuelve datos de la llamada "
+        "más propiedades del contacto (`firstname`, `lastname`, `call_start_time`, "
+        "`call_end_time`, `estatus_llamada`)."
+    ),
+)
+def get_hubspot_calls_with_contacts(
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+) -> list[HubSpotCallListItem]:
+    try:
+        rows = list_calls_with_contact_details(hubspot)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    except HubSpotClientError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return [HubSpotCallListItem.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/meetings",
+    response_model=CreateHubSpotMeetingResponse,
+    summary="Crear reunión en Google Calendar + HubSpot y asociar al contacto",
+    description=(
+        "Crea el evento en Google Calendar (`htmlLink` → `hs_meeting_external_url`), "
+        "crea la reunión CRM 2026-03, pone el deal del contacto en etapa Reunión agendada "
+        "y asocia reunión↔contacto (`associations/default/contact`)."
+    ),
+)
+def post_create_hubspot_meeting(
+    body: CreateHubSpotMeetingRequest,
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+) -> CreateHubSpotMeetingResponse:
+    settings = get_settings()
+    additional_notes: str | None = body.additional_notes
+    if additional_notes is not None:
+        additional_notes = additional_notes.strip() or None
+    try:
+        out = create_meeting_with_calendar_and_contact(
+            settings,
+            hubspot,
+            crm_contact_id=body.crm_contact_id.strip(),
+            email=str(body.email),
+            title=body.title.strip(),
+            description=body.description.strip(),
+            additional_notes=additional_notes,
+            start_time=body.start_time,
+            end_time=body.end_time,
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except GoogleCalendarError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    except HubSpotClientError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return CreateHubSpotMeetingResponse(
+        id=out.meeting_id,
+        hs_meeting_title=out.hs_meeting_title,
+        hs_meeting_body=out.hs_meeting_body,
+        hs_internal_meeting_notes=out.hs_internal_meeting_notes,
+        hs_meeting_external_url=out.hs_meeting_external_url,
+        hs_meeting_start_time=out.hs_meeting_start_time,
+        hs_meeting_end_time=out.hs_meeting_end_time,
+        hubspot_contact_id=out.hubspot_contact_id,
+        hubspot_deal_id=out.hubspot_deal_id,
+        calendar_html_link=out.calendar_html_link,
+    )
+
+
+@router.get(
+    "/meetings",
+    response_model=list[HubSpotMeetingListItem],
+    summary="Listar reuniones asociadas a un contacto",
+    description=(
+        "Recorre páginas (100 por página) en meetings, valida `paging.next.link`, "
+        "filtra reuniones con `associations.contacts` y devuelve datos de meeting + "
+        "firstname/lastname + hubspot_deal_id."
+    ),
+)
+def get_hubspot_meetings_with_contacts(
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+) -> list[HubSpotMeetingListItem]:
+    try:
+        rows = list_meetings_with_contact_details(hubspot)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    except HubSpotClientError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return [HubSpotMeetingListItem.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/calls",
+    response_model=CreateHubSpotCallResponse,
+    summary="Crear llamada HubSpot y asociarla al contacto",
+    description=(
+        "Crea un objeto call (CRM 2026-03), busca el contacto por la propiedad `crm_contact_id`, "
+        "actualiza `call_start_time` y `call_end_time` en el contacto, y ejecuta la asociación "
+        "call→contact (tipo configurable, ver HUBSPOT_CALL_CONTACT_ASSOCIATION_TYPE_ID)."
+    ),
+)
+def post_create_hubspot_call(
+    body: CreateHubSpotCallRequest,
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+) -> CreateHubSpotCallResponse:
+    settings = get_settings()
+    try:
+        out = create_call_link_contact(
+            hubspot,
+            crm_contact_id=body.crm_contact_id.strip(),
+            to_number=body.to_number.strip(),
+            from_number=body.from_number.strip(),
+            title=body.title.strip(),
+            body=body.body.strip(),
+            call_start_time=body.call_start_time,
+            call_end_time=body.call_end_time,
+            association_type_id=int(settings.hubspot_call_contact_association_type_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except HubSpotClientError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return CreateHubSpotCallResponse(
+        id=out.call_id,
+        hs_body_preview=out.hs_body_preview,
+        hs_call_title=out.hs_call_title,
+        hs_call_to_number=out.hs_call_to_number,
+        hs_call_from_number=out.hs_call_from_number,
+        hs_timestamp=out.hs_timestamp,
+        hubspot_contact_id=out.hubspot_contact_id,
     )
 
 

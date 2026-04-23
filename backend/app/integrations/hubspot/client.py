@@ -4,15 +4,23 @@ from typing import Any
 
 import httpx
 
-from app.integrations.hubspot.constants import CONTACT_SEARCH_PROPERTIES
+from app.integrations.hubspot.constants import (
+    CALL_LIST_PROPERTY_NAMES,
+    CONTACT_SEARCH_PROPERTIES,
+    MEETING_LIST_PROPERTY_NAMES,
+)
 
 # Fijas: no se construyen desde variables de entorno.
 HUBSPOT_CRM_CONTACTS_SEARCH_URL = "https://api.hubapi.com/crm/objects/2026-03/contacts/search"
 HUBSPOT_CRM_CONTACTS_RECORD_BASE_URL = "https://api.hubapi.com/crm/objects/2026-03/contacts"
 HUBSPOT_CRM_DEALS_RECORD_BASE_URL = "https://api.hubapi.com/crm/objects/2026-03/deals"
+HUBSPOT_CRM_CALLS_BASE_URL = "https://api.hubapi.com/crm/objects/2026-03/calls"
+HUBSPOT_CRM_MEETINGS_BASE_URL = "https://api.hubapi.com/crm/objects/2026-03/meetings"
 
 DEFAULT_SEARCH_LIMIT = 14
 MAX_SEARCH_LIMIT = 100
+LIST_CALLS_PAGE_LIMIT = 100
+LIST_MEETINGS_PAGE_LIMIT = 100
 
 
 class HubSpotClientError(Exception):
@@ -140,6 +148,276 @@ class HubSpotClient:
                 body=response.text,
             )
         return response.json()
+
+    def create_call(
+        self,
+        *,
+        properties: dict[str, str],
+        associations: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """POST /crm/objects/2026-03/calls — crea un engagement de llamada."""
+        url = HUBSPOT_CRM_CALLS_BASE_URL
+        payload: dict[str, Any] = {"properties": properties}
+        if associations is not None:
+            payload["associations"] = associations
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot create call failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def create_meeting(
+        self,
+        *,
+        properties: dict[str, str],
+        associations: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """POST /crm/objects/2026-03/meetings — engagement de reunión."""
+        url = HUBSPOT_CRM_MEETINGS_BASE_URL
+        payload: dict[str, Any] = {"properties": properties}
+        if associations is not None:
+            payload["associations"] = associations
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot create meeting failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def associate_meeting_with_contact_default(
+        self,
+        *,
+        meeting_id: str,
+        contact_id: str,
+    ) -> dict[str, Any]:
+        """PUT reunion ↔ contacto usando la asociación default del portal."""
+        url = (
+            f"{HUBSPOT_CRM_MEETINGS_BASE_URL}/{meeting_id}"
+            f"/associations/default/contact/{contact_id}"
+        )
+        assoc_headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Accept": "application/json",
+        }
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.put(url, headers=assoc_headers)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot associate meeting→contact failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json() if response.content else {}
+
+    def list_calls_page(
+        self,
+        *,
+        after: str | None = None,
+        archived: bool = False,
+        limit: int = LIST_CALLS_PAGE_LIMIT,
+    ) -> dict[str, Any]:
+        """GET /crm/objects/2026-03/calls — listado paginado con asociaciones a contactos."""
+        url = HUBSPOT_CRM_CALLS_BASE_URL
+        lim = min(max(int(limit), 1), MAX_SEARCH_LIMIT)
+        params: list[tuple[str, str]] = [
+            ("limit", str(lim)),
+            ("associations", "contacts"),
+            ("archived", "true" if archived else "false"),
+        ]
+        for prop in CALL_LIST_PROPERTY_NAMES:
+            params.append(("properties", prop))
+        if after is not None and str(after).strip():
+            params.append(("after", str(after).strip()))
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.get(url, headers=self._headers(), params=params)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot list calls failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def list_meetings_page(
+        self,
+        *,
+        after: str | None = None,
+        archived: bool = False,
+        limit: int = LIST_MEETINGS_PAGE_LIMIT,
+    ) -> dict[str, Any]:
+        """GET /crm/objects/2026-03/meetings — listado paginado con asociaciones a contactos."""
+        url = HUBSPOT_CRM_MEETINGS_BASE_URL
+        lim = min(max(int(limit), 1), MAX_SEARCH_LIMIT)
+        params: list[tuple[str, str]] = [
+            ("limit", str(lim)),
+            ("associations", "contacts"),
+            ("archived", "true" if archived else "false"),
+        ]
+        for prop in MEETING_LIST_PROPERTY_NAMES:
+            params.append(("properties", prop))
+        if after is not None and str(after).strip():
+            params.append(("after", str(after).strip()))
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.get(url, headers=self._headers(), params=params)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot list meetings failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def get_contact_record(
+        self,
+        contact_id: str,
+        *,
+        properties: tuple[str, ...],
+    ) -> dict[str, Any]:
+        """GET contacto por id solicitando solo las propiedades indicadas (sin asociaciones)."""
+        url = f"{HUBSPOT_CRM_CONTACTS_RECORD_BASE_URL}/{contact_id}"
+        params: list[tuple[str, str]] = []
+        for p in properties:
+            params.append(("properties", p))
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.get(url, headers=self._headers(), params=params)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot get contact record failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def search_contacts_by_property_eq(
+        self,
+        *,
+        property_name: str,
+        value: str,
+        limit: int = 5,
+        properties: tuple[str, ...] | None = None,
+        after: str | int | None = None,
+    ) -> dict[str, Any]:
+        """POST contacts/search — una propiedad EQ (p. ej. crm_contact_id)."""
+        url = HUBSPOT_CRM_CONTACTS_SEARCH_URL
+        lim = min(max(int(limit), 1), MAX_SEARCH_LIMIT)
+        after_str = "0" if after is None else str(after).strip() or "0"
+        props = properties if properties is not None else (property_name,)
+        body: dict[str, Any] = {
+            "after": after_str,
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "operator": "EQ",
+                            "propertyName": str(property_name).strip(),
+                            "value": str(value).strip(),
+                        }
+                    ]
+                }
+            ],
+            "limit": lim,
+            "properties": list(dict.fromkeys(props)),
+        }
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.post(url, headers=self._headers(), json=body)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot contact search failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json()
+
+    def associate_call_with_contact(
+        self,
+        *,
+        call_id: str,
+        contact_id: str,
+        association_type_id: int,
+    ) -> dict[str, Any]:
+        """PUT call ↔ contact con tipo HUBSPOT_DEFINED (id en path y en el cuerpo)."""
+        url = (
+            f"{HUBSPOT_CRM_CALLS_BASE_URL}/{call_id}"
+            f"/associations/contact/{contact_id}/{int(association_type_id)}"
+        )
+        payload: list[dict[str, Any]] = [
+            {
+                "associationCategory": "HUBSPOT_DEFINED",
+                "associationTypeId": int(association_type_id),
+            }
+        ]
+
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.put(url, headers=self._headers(), json=payload)
+
+        if response.status_code >= 400:
+            detail = _format_hubspot_error_detail(
+                response.status_code,
+                response.text,
+                request_url=url,
+            )
+            raise HubSpotClientError(
+                f"HubSpot associate call→contact failed: {response.status_code} — {detail}",
+                status_code=response.status_code,
+                body=response.text,
+            )
+        return response.json() if response.content else {}
 
     def patch_contact_properties(self, contact_id: str, properties: dict[str, str]) -> dict[str, Any]:
         url = f"{HUBSPOT_CRM_CONTACTS_RECORD_BASE_URL}/{contact_id}"

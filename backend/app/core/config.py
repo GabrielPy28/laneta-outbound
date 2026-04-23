@@ -34,6 +34,14 @@ class Settings(BaseSettings):
             "HUBSPOT_PRIVATE_APP_TOKEN",
         ),
     )
+    hubspot_call_contact_association_type_id: int = Field(
+        default=194,
+        validation_alias="HUBSPOT_CALL_CONTACT_ASSOCIATION_TYPE_ID",
+        description=(
+            "ID de asociación HubSpot (HUBSPOT_DEFINED) entre objetos call y contact. "
+            "Puede variar por portal; solemos usar 194 en la ruta PUT y en el cuerpo."
+        ),
+    )
     smartlead_api_key: str | None = Field(
         default=None,
         validation_alias="SMARTLEAD_API_KEY",
@@ -101,6 +109,52 @@ class Settings(BaseSettings):
         default="http://localhost:5173,http://127.0.0.1:5173",
         validation_alias="CORS_ORIGINS",
         description="Orígenes permitidos CORS, separados por coma (frontend).",
+    )
+
+    google_oauth_credentials_file: str = Field(
+        default="credentials.json",
+        validation_alias="GOOGLE_OAUTH_CREDENTIALS_FILE",
+        description="Ruta al OAuth client JSON (desde el cwd del proceso, p. ej. carpeta backend/).",
+    )
+    google_oauth_token_file: str = Field(
+        default="token.json",
+        validation_alias="GOOGLE_OAUTH_TOKEN_FILE",
+        description="Token OAuth del usuario/calendario (refresh); relativo al cwd.",
+    )
+    google_calendar_id: str = Field(
+        default="sistemas@laneta.com",
+        validation_alias="GOOGLE_CALENDAR_ID",
+        description="calendarId en Calendar API donde se crean los eventos.",
+    )
+    google_calendar_team_email: str = Field(
+        default="sistemas@laneta.com",
+        validation_alias="GOOGLE_CALENDAR_TEAM_EMAIL",
+    )
+    google_calendar_team_display_name: str = Field(
+        default="La Neta Team",
+        validation_alias="GOOGLE_CALENDAR_TEAM_DISPLAY_NAME",
+    )
+    google_calendar_time_zone: str = Field(
+        default="America/Mexico_City",
+        validation_alias="GOOGLE_CALENDAR_TIME_ZONE",
+    )
+    google_oauth_client_id: str | None = Field(
+        default=None,
+        validation_alias="GOOGLE_OAUTH_CLIENT_ID",
+        description="OAuth client_id (opcional si está en credentials.json).",
+    )
+    google_oauth_client_secret: str | None = Field(
+        default=None,
+        validation_alias="GOOGLE_OAUTH_CLIENT_SECRET",
+        description="OAuth client_secret (opcional si está en credentials.json).",
+    )
+    google_oauth_refresh_token: str | None = Field(
+        default=None,
+        validation_alias="GOOGLE_OAUTH_REFRESH_TOKEN",
+        description=(
+            "Refresh token de usuario con scopes de Calendar; útil en Docker sin token.json. "
+            "Se puede combinar con credentials.json solo para client_id/secret."
+        ),
     )
 
     @field_validator("database_url", mode="before")

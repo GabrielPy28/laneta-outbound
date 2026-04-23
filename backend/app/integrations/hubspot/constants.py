@@ -22,3 +22,35 @@ CONTACT_SEARCH_PROPERTIES: tuple[str, ...] = (
     "company_size",
     "campaign_id",
 )
+
+# GET /crm/objects/2026-03/calls (listado + asociaciones)
+CALL_LIST_PROPERTY_NAMES: tuple[str, ...] = (
+    "hs_call_title",
+    "hs_call_body",
+    "hs_call_to_number",
+    "hs_call_from_number",
+)
+
+# Propiedades del contacto al enriquecer cada llamada con contacto asociado
+CONTACT_PROPERTIES_FOR_CALL_LIST: tuple[str, ...] = (
+    "firstname",
+    "lastname",
+    "call_start_time",
+    "call_end_time",
+    "estatus_llamada",
+)
+
+# GET /crm/objects/2026-03/meetings (listado + asociaciones)
+MEETING_LIST_PROPERTY_NAMES: tuple[str, ...] = (
+    "hs_meeting_title",
+    "hs_meeting_body",
+    "hs_internal_meeting_notes",
+    "hs_meeting_external_url",
+    "hs_meeting_start_time",
+    "hs_meeting_end_time",
+)
+
+CONTACT_PROPERTIES_FOR_MEETING_LIST: tuple[str, ...] = (
+    "firstname",
+    "lastname",
+)
