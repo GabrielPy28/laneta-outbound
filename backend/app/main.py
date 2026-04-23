@@ -26,9 +26,13 @@ _cors_list = [
     if o.strip()
 ]
 # Frontend producción (Vercel)
-_vercel_origin = "https://laneta-outbound.vercel.app"
-if _vercel_origin not in _cors_list:
-    _cors_list.append(_vercel_origin)
+_vercel_origins = (
+    "https://laneta-outbound.vercel.app",
+    "https://gmr-pages.vercel.app",
+)
+for _o in _vercel_origins:
+    if _o not in _cors_list:
+        _cors_list.append(_o)
 if _cors_list:
     app.add_middleware(
         CORSMiddleware,
