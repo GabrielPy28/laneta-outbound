@@ -124,13 +124,16 @@ def create_meeting_with_calendar_and_contact(
         description=description.strip(),
         contact_email=email.strip(),
         contact_display_name=display_name,
+        additional_notes=additional_notes,
         start_time=start_time_mx,
         end_time=end_time_mx,
     )
+    hangout = cal_event.get("hangoutLink") if isinstance(cal_event, dict) else None
     html_link = cal_event.get("htmlLink") if isinstance(cal_event, dict) else None
-    html_link_s = str(html_link).strip() if html_link else ""
+    calendar_link = hangout or html_link
+    html_link_s = str(calendar_link).strip() if calendar_link else ""
     if not html_link_s:
-        raise ValueError("Google Calendar no devolvió htmlLink en la respuesta.")
+        raise ValueError("Google Calendar no devolvió hangoutLink/htmlLink en la respuesta.")
 
     notes = (additional_notes.strip() if additional_notes else "") or ""
 

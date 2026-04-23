@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,7 @@ def insert_calendar_event(
     description: str,
     contact_email: str,
     contact_display_name: str,
+    additional_notes: str | None,
     start_time: datetime,
     end_time: datetime,
 ) -> dict[str, Any]:
@@ -149,12 +151,12 @@ def insert_calendar_event(
             {
                 "displayName": settings.google_calendar_team_display_name,
                 "email": settings.google_calendar_team_email,
-                "additionalGuests": 2,
+                "comment": "Meeting Administrator",
             },
             {
                 "displayName": contact_display_name,
                 "email": contact_email.strip(),
-                "additionalGuests": 2,
+                "comment": additional_notes or "Guest",
             },
         ],
         "guestsCanInviteOthers": True,
@@ -163,6 +165,12 @@ def insert_calendar_event(
             "email": settings.google_calendar_team_email,
         },
         "eventType": "default",
+        "conferenceData": {
+            "createRequest": {
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                "requestId": str(uuid.uuid4()),
+            }
+        },
     }
 
     cal_id = settings.google_calendar_id.strip()
@@ -174,8 +182,9 @@ def insert_calendar_event(
                 calendarId=cal_id,
                 body=body,
                 conferenceDataVersion=1,
-                maxAttendees=8,
-                sendUpdates="none",
+                maxAttendees=6,
+                sendUpdates="all",
+                supportsAttachments=True,
             )
             .execute()
         )
