@@ -145,6 +145,9 @@ def create_meeting_with_calendar_and_contact(
             "hs_internal_meeting_notes": notes,
             "hs_meeting_external_url": html_link_s,
             "hs_meeting_location": "Google Meet",
+            "hs_video_conference_url": html_link_s,
+            "hs_video_conference_platform": "Google Meet",
+            "hs_meeting_location_type": "VCE",
             "hs_meeting_start_time": _hubspot_meeting_time_utc_z(start_time_mx),
             "hs_meeting_end_time": _hubspot_meeting_time_utc_z(end_time_mx),
         }
