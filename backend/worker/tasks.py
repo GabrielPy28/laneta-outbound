@@ -23,6 +23,14 @@ from worker.celery_app import celery
 logger = logging.getLogger(__name__)
 
 
+@celery.task(name="worker.tasks.postmaster_scheduled_domain_health")
+def postmaster_scheduled_domain_health() -> dict:
+    """Chequeo Postmaster para la lista `POSTMASTER_BEAT_DOMAIN_NAMES` (lun/mié/vie por Beat)."""
+    from app.services.postmaster_scheduled import run_postmaster_health_check_job
+
+    return run_postmaster_health_check_job()
+
+
 def _hubspot_optional() -> HubSpotClient | None:
     token = (get_settings().hubspot_access_token or "").strip()
     if not token:

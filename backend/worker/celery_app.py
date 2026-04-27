@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 
 from celery import Celery
+from celery.schedules import crontab
 
 
 def _redis_broker_url() -> str:
@@ -35,7 +36,8 @@ import worker.tasks  # noqa: E402, F401 — registra tareas
 from app.core.config import get_settings  # noqa: E402
 
 _s = get_settings()
-celery.conf.beat_schedule = {
+
+_beat_schedule: dict = {
     "hubspot-sync-and-smartlead-push": {
         "task": "worker.tasks.hubspot_sync_and_smartlead_push",
         "schedule": timedelta(seconds=_s.schedule_hubspot_sync_seconds),
@@ -45,3 +47,16 @@ celery.conf.beat_schedule = {
         "schedule": timedelta(seconds=_s.schedule_smartlead_active_seconds),
     },
 }
+
+if _s.postmaster_beat_enabled:
+    dow = (_s.postmaster_beat_day_of_week or "1,3,5").strip()
+    _beat_schedule["postmaster-scheduled-domain-health"] = {
+        "task": "worker.tasks.postmaster_scheduled_domain_health",
+        "schedule": crontab(
+            minute=_s.postmaster_beat_minute_utc,
+            hour=_s.postmaster_beat_hour_utc,
+            day_of_week=dow,
+        ),
+    }
+
+celery.conf.beat_schedule = _beat_schedule

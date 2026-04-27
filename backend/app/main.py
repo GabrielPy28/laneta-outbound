@@ -6,6 +6,7 @@ from app.api.campaign_active.router import router as campaign_active_router
 from app.api.health.router import router as health_router
 from app.api.leads.router import router as leads_router
 from app.api.hubspot.router import router as hubspot_router
+from app.api.postmaster.router import router as postmaster_router
 from app.api.root.router import router as root_router
 from app.api.smartlead.router import router as smartlead_router
 from app.core.config import get_settings
@@ -45,6 +46,7 @@ if _cors_list:
 app.include_router(root_router)
 app.include_router(health_router)
 app.include_router(hubspot_router, prefix="/api/v1/hubspot")
+app.include_router(postmaster_router, prefix="/api/v1/postmaster")
 app.include_router(smartlead_router, prefix="/api/v1/smartlead")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(leads_router, prefix="/api/v1/leads")

@@ -156,6 +156,71 @@ class Settings(BaseSettings):
             "Se puede combinar con credentials.json solo para client_id/secret."
         ),
     )
+    domains_registry_file: str = Field(
+        default="domains.json",
+        validation_alias="DOMAINS_REGISTRY_FILE",
+        description="Ruta al catálogo de dominios (formato domains.json) usado para validación interna.",
+    )
+
+    postmaster_beat_enabled: bool = Field(
+        default=True,
+        validation_alias="POSTMASTER_BEAT_ENABLED",
+        description="Si es false, Celery Beat no registra la tarea periódica de chequeo Postmaster.",
+    )
+    postmaster_beat_hour_utc: int = Field(
+        default=14,
+        ge=0,
+        le=23,
+        validation_alias="POSTMASTER_BEAT_HOUR_UTC",
+        description=(
+            "Hora UTC para crontab del job Postmaster (default 14 = 08:30 en America/Mexico_City con UTC-6)."
+        ),
+    )
+    postmaster_beat_minute_utc: int = Field(
+        default=30,
+        ge=0,
+        le=59,
+        validation_alias="POSTMASTER_BEAT_MINUTE_UTC",
+        description="Minuto UTC para el job Postmaster.",
+    )
+    postmaster_beat_day_of_week: str = Field(
+        default="1,3,5",
+        validation_alias="POSTMASTER_BEAT_DAY_OF_WEEK",
+        description="Crontab day_of_week (0=domingo): 1,3,5 = lunes, miércoles, viernes.",
+    )
+
+    smtp_host: str = Field(
+        default="smtp.gmail.com",
+        validation_alias="SMTP_HOST",
+        description="Servidor SMTP (Google Workspace / Gmail: smtp.gmail.com).",
+    )
+    smtp_port: int = Field(
+        default=587,
+        ge=1,
+        le=65535,
+        validation_alias="SMTP_PORT",
+        description="587 + STARTTLS habitual en Gmail; 465 con SMTP_SSL si smtp_use_ssl=true.",
+    )
+    smtp_use_ssl: bool = Field(
+        default=False,
+        validation_alias="SMTP_USE_SSL",
+        description="Si es true, usa SMTP_SSL (típico puerto 465); si false, SMTP + STARTTLS.",
+    )
+    smtp_user: str | None = Field(
+        default=None,
+        validation_alias="SMTP_USER",
+        description="Usuario SMTP (ej. gabriel@laneta.com).",
+    )
+    smtp_password: str | None = Field(
+        default=None,
+        validation_alias="SMTP_PASSWORD",
+        description="Contraseña de aplicación o secreto SMTP.",
+    )
+    postmaster_report_to_email: str = Field(
+        default="domain-status@laneta.com",
+        validation_alias="POSTMASTER_REPORT_TO_EMAIL",
+        description="Destinatario del resumen Postmaster enviado por el job programado.",
+    )
 
     @field_validator("database_url", mode="before")
     @classmethod
