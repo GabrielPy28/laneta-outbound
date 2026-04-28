@@ -136,5 +136,6 @@ Un **servicio API** que automatiza el ciclo: **lead nuevo en HubSpot** → **reg
 ## Documentación
 
 - **API propia (OpenAPI):** con el servidor en marcha, abre `/docs` o `/redoc` para el contrato HTTP de este backend.
+- **Postmaster — status y salud de dominios:** ver [Postmaster - Domains Health & Status](backend/README_POSTMASTER_DOMAIN_HEALTH.md) para alcance, variables, endpoints, schemas, ejecución del job y resultados persistidos.
 - **HubSpot CRM — búsqueda de contactos (referencia usada en ingesta):** [HubSpot API Docs — Search contacts](https://developers.hubspot.com/docs/api-reference/latest/crm/objects/contacts/search/search-contacts?playground=open)
 - **Smartlead:** [SmartLead API Docs](https://api.smartlead.ai/introduction)

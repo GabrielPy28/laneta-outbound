@@ -9,6 +9,7 @@ from app.models.lead import Lead
 from app.models.lead_deal import LeadDeal  # noqa: F401
 from app.models.lead_statistics import LeadStatistics  # noqa: F401
 from app.models.lead_message_history import LeadMessageHistory  # noqa: F401
+from app.models.postmaster_report import PostmasterReport  # noqa: F401
 
 
 @pytest.fixture

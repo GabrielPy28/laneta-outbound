@@ -4,6 +4,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LeadActivityPage } from "@/pages/LeadActivityPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { PostmasterReportsPage } from "@/pages/PostmasterReportsPage";
 
 export default function App() {
   return (
@@ -23,6 +24,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <LeadActivityPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reportes/postmaster"
+            element={
+              <ProtectedRoute>
+                <PostmasterReportsPage />
               </ProtectedRoute>
             }
           />

@@ -216,6 +216,12 @@ export function DashboardPage() {
             <FiRefreshCw className={cn("h-4 w-4", loading && "animate-spin")} aria-hidden />
             Actualizar
           </button>
+          <Link
+            to="/reportes/postmaster"
+            className="rounded-xl border border-blue/40 bg-blue/15 px-4 py-2 text-sm font-medium text-blue transition hover:bg-blue/25"
+          >
+            Ver reportes Postmaster
+          </Link>
           <button
             type="button"
             onClick={logout}

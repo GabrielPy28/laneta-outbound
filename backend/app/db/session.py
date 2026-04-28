@@ -117,6 +117,7 @@ def create_tables() -> None:
         LeadDeal,
         LeadMessageHistory,
         LeadStatistics,
+        PostmasterReport,
     )
 
     Base.metadata.create_all(bind=engine)

@@ -9,6 +9,8 @@ from html import escape
 from typing import Any
 
 from app.core.config import Settings, get_settings
+from app.db.session import create_session
+from app.models.postmaster_report import PostmasterReport
 from app.services.postmaster_domain_status import get_domain_status_report
 from app.services.smtp_mail import send_plain_text_email
 
@@ -278,6 +280,24 @@ def run_postmaster_health_check_job() -> dict[str, Any]:
         POSTMASTER_BEAT_DOMAIN_NAMES,
     )
     email_meta = _send_batch_report_email(settings, payload)
+    try:
+        db = create_session()
+        report = PostmasterReport(
+            domains_requested=int(payload.get("domains_requested", 0) or 0),
+            results_count=int(payload.get("results_count", 0) or 0),
+            errors_count=int(payload.get("errors_count", 0) or 0),
+            email_sent=bool(email_meta.get("email_sent", False)),
+            email_to=str(email_meta.get("email_to") or "").strip() or None,
+            email_error=str(email_meta.get("email_error") or "").strip() or None,
+            payload=payload,
+        )
+        db.add(report)
+        db.commit()
+    except Exception as exc:
+        logger.exception("Postmaster: no se pudo persistir el reporte batch: %s", exc)
+    finally:
+        if "db" in locals():
+            db.close()
     out = dict(payload)
     out.update(email_meta)
     return out
