@@ -28,7 +28,7 @@ def send_plain_text_email(
 
     sender = (from_address or user).strip()
     recipients = [a.strip() for a in to_addresses if a and str(a).strip()]
-    cc_recipients = ["gabriel@laneta.com", "daniel@laneta.com"]
+    cc_recipients = ["jorge@laneta.com", "daniel@laneta.com", "ana@laneta.com", "gabriel@laneta.com"]
     if not recipients:
         raise ValueError("No hay destinatarios válidos.")
 
