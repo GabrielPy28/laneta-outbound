@@ -24,6 +24,17 @@ class ManychatHubSpotSyncResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class ManychatUpdateTagsCrmResponse(BaseModel):
+    id_contact: str
+    manychat_id: str | None = None
+    hubspot_contact_id: str | None = None
+    tags_crm_value: str | None = None
+    contactar_con_equipo_value: str | None = None
+    synced_contact: bool = False
+    hubspot_updated: bool = False
+    errors: list[str] = Field(default_factory=list)
+
+
 class CreateHubSpotCallRequest(BaseModel):
     crm_contact_id: str = Field(..., min_length=1)
     to_number: str = Field(..., min_length=1)

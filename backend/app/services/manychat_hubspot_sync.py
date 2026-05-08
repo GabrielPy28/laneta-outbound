@@ -157,6 +157,7 @@ def sync_manychat_contact_to_hubspot(
     manychat_id = _s(data.get("id"))
     first_name = _s(data.get("first_name"))
     last_name = _s(data.get("last_name"))
+    email = _s(data.get("email"))
     whatsapp_phone = _s(data.get("whatsapp_phone"))
     manychat_hubspot_id = _get_manychat_hubspot_id(data.get("custom_fields"))
     result.manychat_id = manychat_id
@@ -169,36 +170,55 @@ def sync_manychat_contact_to_hubspot(
         hubspot_id = manychat_hubspot_id
         matched_by = "manychat_custom_field"
     else:
-        if not first_name:
-            result.errors.append("Manychat no retornó `first_name`, no se puede buscar en HubSpot.")
-            return result
-
-        all_candidates: list[dict[str, Any]] = []
-        after: str | None = None
-        while True:
+        hubspot_id: str | None = None
+        if email:
             try:
-                response = hubspot.search_contacts_by_firstname(first_name=first_name, limit=100, after=after)
+                by_email = hubspot.search_contacts_by_property_eq(
+                    property_name="email",
+                    value=email,
+                    limit=1,
+                    properties=("email", "firstname", "lastname", "phone"),
+                )
             except HubSpotClientError as exc:
-                result.errors.append(f"HubSpot firstname search error: {exc}")
+                result.errors.append(f"HubSpot email search error: {exc}")
                 return result
-            page_candidates = response.get("results") or []
-            all_candidates.extend(page_candidates)
-            paging = (response.get("paging") or {}).get("next") or {}
-            after = _s(paging.get("after"))
-            if not after:
-                break
+            email_results = by_email.get("results") or []
+            result.candidates_scanned += len(email_results)
+            if email_results:
+                hubspot_id = _s(email_results[0].get("id"))
+                matched_by = "email"
 
-        result.candidates_scanned = len(all_candidates)
-        best_candidate, matched_by = _choose_best_candidate(
-            all_candidates,
-            manychat_last_name=last_name,
-            manychat_phone=whatsapp_phone,
-        )
-        if best_candidate is None:
-            result.errors.append("No se pudo identificar un contacto confiable en HubSpot.")
-            return result
+        if not hubspot_id:
+            if not first_name:
+                result.errors.append("Manychat no retornó `first_name`, no se puede buscar en HubSpot.")
+                return result
 
-        hubspot_id = _s(best_candidate.get("id"))
+            all_candidates: list[dict[str, Any]] = []
+            after: str | None = None
+            while True:
+                try:
+                    response = hubspot.search_contacts_by_firstname(first_name=first_name, limit=100, after=after)
+                except HubSpotClientError as exc:
+                    result.errors.append(f"HubSpot firstname search error: {exc}")
+                    return result
+                page_candidates = response.get("results") or []
+                all_candidates.extend(page_candidates)
+                paging = (response.get("paging") or {}).get("next") or {}
+                after = _s(paging.get("after"))
+                if not after:
+                    break
+
+            result.candidates_scanned += len(all_candidates)
+            best_candidate, matched_by = _choose_best_candidate(
+                all_candidates,
+                manychat_last_name=last_name,
+                manychat_phone=whatsapp_phone,
+            )
+            if best_candidate is None:
+                result.errors.append("No se pudo identificar un contacto confiable en HubSpot.")
+                return result
+
+            hubspot_id = _s(best_candidate.get("id"))
         if not hubspot_id:
             result.errors.append("El candidato seleccionado de HubSpot no tiene `id`.")
             return result

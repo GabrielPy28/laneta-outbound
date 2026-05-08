@@ -21,6 +21,8 @@ class FakeHubSpotClient:
         self.pages = pages
         self.patch_calls = []
         self.search_calls = 0
+        self.email_search_calls = []
+        self.email_search_results = []
 
     def search_contacts_by_firstname(self, *, first_name: str, limit: int = 100, after=None):
         self.search_calls += 1
@@ -29,6 +31,10 @@ class FakeHubSpotClient:
         if after == "next-1":
             return self.pages[1]
         return {"results": []}
+
+    def search_contacts_by_property_eq(self, *, property_name: str, value: str, limit: int = 5, properties=None, after=None):
+        self.email_search_calls.append((property_name, value))
+        return {"results": self.email_search_results}
 
     def patch_contact_properties(self, contact_id: str, properties: dict[str, str]):
         self.patch_calls.append((contact_id, properties))
@@ -154,3 +160,28 @@ def test_sync_manychat_to_hubspot_uses_custom_field_hubspot_id_first():
     assert result.matched_by == "manychat_custom_field"
     assert result.hubspot_updated is True
     assert hubspot.search_calls == 0
+
+
+def test_sync_manychat_to_hubspot_tries_email_first():
+    manychat = FakeManychatClient(
+        {
+            "status": "success",
+            "data": {
+                "id": "999",
+                "email": "lead@example.com",
+                "first_name": None,
+                "last_name": None,
+                "custom_fields": [],
+            },
+        }
+    )
+    hubspot = FakeHubSpotClient([{"results": []}])
+    hubspot.email_search_results = [{"id": "HS-EMAIL-1", "properties": {"email": "lead@example.com"}}]
+
+    result = sync_manychat_contact_to_hubspot(id_contact="999", manychat=manychat, hubspot=hubspot)
+
+    assert result.hubspot_contact_id == "HS-EMAIL-1"
+    assert result.matched_by == "email"
+    assert result.hubspot_updated is True
+    assert hubspot.search_calls == 0
+    assert hubspot.email_search_calls[0] == ("email", "lead@example.com")

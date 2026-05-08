@@ -10,11 +10,12 @@ from app.api.hubspot.schemas import (
     HubSpotMeetingListItem,
     HubSpotNewLeadsSyncResponse,
     ManychatHubSpotSyncResponse,
+    ManychatUpdateTagsCrmResponse,
 )
 from app.core.config import get_settings
 from app.integrations.google_calendar.client import GoogleCalendarError
 from app.integrations.hubspot.client import HubSpotClient, HubSpotClientError
-from app.integrations.manychat.client import ManychatClient
+from app.integrations.manychat.client import ManychatClient, ManychatClientError
 from app.services.hubspot_calls import create_call_link_contact, list_calls_with_contact_details
 from app.services.hubspot_meetings import (
     create_meeting_with_calendar_and_contact,
@@ -22,6 +23,10 @@ from app.services.hubspot_meetings import (
 )
 from app.services.hubspot_ingest import sync_new_leads_from_hubspot
 from app.services.manychat_hubspot_sync import sync_manychat_contact_to_hubspot
+from app.services.manychat_hubspot_update import (
+    extract_manychat_field,
+    resolve_manychat_hubspot_contact,
+)
 
 router = APIRouter(tags=["hubspot"])
 
@@ -265,3 +270,165 @@ def post_sync_manychat_contact(
         manychat_updated=result.manychat_updated,
         errors=result.errors,
     )
+
+
+@router.post(
+    "/update-tags-crm/meta_ft_lead/{id_contact}",
+    response_model=ManychatUpdateTagsCrmResponse,
+    summary="Actualizar tags CRM desde Manychat (y sincronizar si falta)",
+    description=(
+        "Busca contacto HubSpot por `id_manychat`. Si no existe, sincroniza primero usando "
+        "`/sync-manychat-contact/{id_contact}`. Luego actualiza `tags_crm` con la "
+        "`description` de `custom_fields.name == tag_crm` y, cuando aplique, también "
+        "`contactar_con_equipo`."
+    ),
+)
+def post_update_tags_crm_meta_ft_lead(
+    id_contact: str,
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+    manychat: ManychatClient = Depends(get_manychat_client),
+) -> ManychatUpdateTagsCrmResponse:
+    response = ManychatUpdateTagsCrmResponse(id_contact=str(id_contact).strip())
+    try:
+        resolved = resolve_manychat_hubspot_contact(
+            id_contact=id_contact,
+            manychat=manychat,
+            hubspot=hubspot,
+        )
+    except (ManychatClientError, HubSpotClientError) as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response.manychat_id = resolved.manychat_id
+    response.synced_contact = resolved.synced_contact
+    response.errors.extend(resolved.errors)
+    response.hubspot_contact_id = resolved.hubspot_contact_id
+    if not resolved.hubspot_contact_id:
+        return response
+
+    tags_crm_value = extract_manychat_field(resolved.data, name="tag_crm", key="value")
+    contactar_con_equipo_value = extract_manychat_field(resolved.data, name="contactar con equipo")
+    response.tags_crm_value = tags_crm_value
+    response.contactar_con_equipo_value = contactar_con_equipo_value
+
+    properties_to_update: dict[str, str] = {}
+    if tags_crm_value is not None:
+        properties_to_update["tags_crm"] = tags_crm_value
+    if contactar_con_equipo_value is not None:
+        properties_to_update["contactar_con_equipo"] = contactar_con_equipo_value
+
+    if not properties_to_update:
+        response.errors.append(
+            "Manychat no retornó campos para actualizar (`tag_crm` o `Contactar con Equipo`)."
+        )
+        return response
+
+    try:
+        hubspot.patch_contact_properties(resolved.hubspot_contact_id, properties_to_update)
+    except HubSpotClientError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response.hubspot_updated = True
+    return response
+
+
+@router.post(
+    "/update-tags-crm/youtube_growth_lead/{id_contact}/{contact}",
+    response_model=ManychatUpdateTagsCrmResponse,
+    summary="Actualizar tags CRM YouTube growth lead",
+    description=(
+        "Misma lógica de sincronización por `id_manychat` del endpoint meta_ft_lead. "
+        "Si `contact=true` actualiza `tags_crm` (desde `tag_crm.description`) y "
+        "`contactar_con_equipo=true`. Si `contact=false`, solo actualiza "
+        "`contactar_con_equipo=false`."
+    ),
+)
+def post_update_tags_crm_youtube_growth_lead(
+    id_contact: str,
+    contact: bool,
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+    manychat: ManychatClient = Depends(get_manychat_client),
+) -> ManychatUpdateTagsCrmResponse:
+    response = ManychatUpdateTagsCrmResponse(id_contact=str(id_contact).strip())
+    try:
+        resolved = resolve_manychat_hubspot_contact(
+            id_contact=id_contact,
+            manychat=manychat,
+            hubspot=hubspot,
+        )
+    except (ManychatClientError, HubSpotClientError) as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response.manychat_id = resolved.manychat_id
+    response.synced_contact = resolved.synced_contact
+    response.errors.extend(resolved.errors)
+    response.hubspot_contact_id = resolved.hubspot_contact_id
+    if not resolved.hubspot_contact_id:
+        return response
+
+    properties_to_update: dict[str, str] = {
+        "contactar_con_equipo": "true" if contact else "false",
+    }
+    response.contactar_con_equipo_value = properties_to_update["contactar_con_equipo"]
+
+    if contact:
+        tags_crm_value = extract_manychat_field(resolved.data, name="tag_crm", key="value")
+        response.tags_crm_value = tags_crm_value
+        if tags_crm_value is not None:
+            properties_to_update["tags_crm"] = tags_crm_value
+        else:
+            response.errors.append("Manychat no retornó `tag_crm` para actualizar `tags_crm`.")
+
+    try:
+        hubspot.patch_contact_properties(resolved.hubspot_contact_id, properties_to_update)
+    except HubSpotClientError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response.hubspot_updated = True
+    return response
+
+
+@router.post(
+    "/support/meta_ft_lead/{id_contact}/{contact}",
+    response_model=ManychatUpdateTagsCrmResponse,
+    summary="Actualizar bandera de soporte para meta_ft_lead",
+    description=(
+        "Reutiliza la lógica de identificación del contacto por `id_manychat` (con "
+        "sincronización si no existe) y actualiza únicamente la propiedad "
+        "`contactar_con_equipo` con el valor de `contact`."
+    ),
+)
+def post_support_meta_ft_lead(
+    id_contact: str,
+    contact: bool,
+    hubspot: HubSpotClient = Depends(get_hubspot_client),
+    manychat: ManychatClient = Depends(get_manychat_client),
+) -> ManychatUpdateTagsCrmResponse:
+    response = ManychatUpdateTagsCrmResponse(id_contact=str(id_contact).strip())
+    try:
+        resolved = resolve_manychat_hubspot_contact(
+            id_contact=id_contact,
+            manychat=manychat,
+            hubspot=hubspot,
+        )
+    except (ManychatClientError, HubSpotClientError) as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response.manychat_id = resolved.manychat_id
+    response.synced_contact = resolved.synced_contact
+    response.errors.extend(resolved.errors)
+    response.hubspot_contact_id = resolved.hubspot_contact_id
+    if not resolved.hubspot_contact_id:
+        return response
+
+    contactar_con_equipo_value = "true" if contact else "false"
+    response.contactar_con_equipo_value = contactar_con_equipo_value
+    try:
+        hubspot.patch_contact_properties(
+            resolved.hubspot_contact_id,
+            {"contactar_con_equipo": contactar_con_equipo_value},
+        )
+    except HubSpotClientError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response.hubspot_updated = True
+    return response
