@@ -19,6 +19,7 @@ POSTMASTER_BEAT_DOMAIN_NAMES: tuple[str, ...] = (
     "elevngo.me",
     "elevnhub.me",
     "elevnpro.me",
+    "go.elevnpro.me",
     "go.lanetapro.com",
     "hello.elevngo.me",
     "hello.elevnhub.me",
@@ -26,6 +27,8 @@ POSTMASTER_BEAT_DOMAIN_NAMES: tuple[str, ...] = (
     "laneta.com",
     "lanetahub.com",
     "lanetapro.com",
+    "partners.lanetapro.com",
+    "partners.lanetahub.com"
     "we.elevnhub.me",
     "we.elevnpro.me",
 )
