@@ -99,6 +99,96 @@ def _recommendation(status: str) -> tuple[str, str]:
     )
 
 
+def _float_metric(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _aggregate_worst_case_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Score conservador: peor valor observado en la ventana (máximos en tasas de problema,
+    mínimos en tasas de éxito, reputación con mayor penalización).
+    """
+    worst_rep: str | None = None
+    worst_rep_pen = -1
+    spam_max: float | None = None
+    user_spam_max: float | None = None
+    dkim_min: float | None = None
+    spf_min: float | None = None
+    dmarc_min: float | None = None
+    enc_min: float | None = None
+    deliv_max: float | None = None
+
+    for row in rows:
+        rep = row.get("domainReputation")
+        if rep == "REPUTATION_CATEGORY_UNSPECIFIED":
+            rep = None
+        if rep is not None:
+            p = _domain_rep_penalty(str(rep))
+            if p > worst_rep_pen:
+                worst_rep_pen = p
+                worst_rep = str(rep)
+
+        sr = _float_metric(row.get("spamRate"))
+        if sr is not None:
+            spam_max = sr if spam_max is None else max(spam_max, sr)
+
+        usr = _float_metric(row.get("userReportedSpamRatio"))
+        if usr is not None:
+            user_spam_max = usr if user_spam_max is None else max(user_spam_max, usr)
+
+        dk = _float_metric(row.get("dkimSuccessRate"))
+        if dk is not None:
+            dkim_min = dk if dkim_min is None else min(dkim_min, dk)
+        sp = _float_metric(row.get("spfSuccessRate"))
+        if sp is not None:
+            spf_min = sp if spf_min is None else min(spf_min, sp)
+        dm = _float_metric(row.get("dmarcSuccessRate"))
+        if dm is not None:
+            dmarc_min = dm if dmarc_min is None else min(dmarc_min, dm)
+        enc = _float_metric(row.get("inboundEncryptionRatio"))
+        if enc is not None:
+            enc_min = enc if enc_min is None else min(enc_min, enc)
+        der = _float_metric(row.get("deliveryErrorRate"))
+        if der is not None:
+            deliv_max = der if deliv_max is None else max(deliv_max, der)
+
+    return {
+        "domainReputation": worst_rep,
+        "spamRate": spam_max,
+        "userReportedSpamRatio": user_spam_max,
+        "dkimSuccessRate": dkim_min,
+        "spfSuccessRate": spf_min,
+        "dmarcSuccessRate": dmarc_min,
+        "inboundEncryptionRatio": enc_min,
+        "deliveryErrorRate": deliv_max,
+    }
+
+
+def _day_key(row: dict[str, Any]) -> tuple[int, int, int]:
+    dt = row.get("date")
+    if isinstance(dt, dict):
+        try:
+            return (int(dt["year"]), int(dt["month"]), int(dt["day"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+    return (0, 0, 0)
+
+
+def _row_date_iso(row: dict[str, Any]) -> str | None:
+    yy, mm, dd = _day_key(row)
+    if yy == 0:
+        return None
+    try:
+        return date(yy, mm, dd).isoformat()
+    except ValueError:
+        return None
+
+
 def get_domain_status_report(settings: Settings, *, domain: str) -> DomainStatusReport:
     clean_domain = domain.strip().lower()
     if not clean_domain:
@@ -112,29 +202,18 @@ def get_domain_status_report(settings: Settings, *, domain: str) -> DomainStatus
     if not stats:
         raise PostmasterNoMetricsError(POSTMASTER_NO_METRICS_MESSAGE)
 
-    def _day_key(row: dict[str, Any]) -> tuple[int, int, int]:
-        dt = row.get("date")
-        if isinstance(dt, dict):
-            try:
-                return (int(dt["year"]), int(dt["month"]), int(dt["day"]))
-            except (KeyError, TypeError, ValueError):
-                pass
-        return (0, 0, 0)
+    worst = _aggregate_worst_case_metrics(stats)
 
-    latest = stats[0]
-    if len(stats) > 1:
-        latest = max(stats, key=_day_key)
-
-    rep = latest.get("domainReputation")
+    rep = worst.get("domainReputation")
     if rep == "REPUTATION_CATEGORY_UNSPECIFIED":
         rep = None
-    spam_rate = latest.get("spamRate")
-    user_spam_ratio = latest.get("userReportedSpamRatio")
-    dkim = latest.get("dkimSuccessRate")
-    spf = latest.get("spfSuccessRate")
-    dmarc = latest.get("dmarcSuccessRate")
-    inbound_encryption = latest.get("inboundEncryptionRatio")
-    delivery_error_rate = latest.get("deliveryErrorRate")
+    spam_rate = worst.get("spamRate")
+    user_spam_ratio = worst.get("userReportedSpamRatio")
+    dkim = worst.get("dkimSuccessRate")
+    spf = worst.get("spfSuccessRate")
+    dmarc = worst.get("dmarcSuccessRate")
+    inbound_encryption = worst.get("inboundEncryptionRatio")
+    delivery_error_rate = worst.get("deliveryErrorRate")
 
     score = 100
     if rep is not None:
@@ -151,18 +230,30 @@ def get_domain_status_report(settings: Settings, *, domain: str) -> DomainStatus
     status = "bien" if score >= 80 else "ordinario" if score >= 55 else "mal"
     action, summary = _recommendation(status)
 
+    day_keys = [k for k in (_day_key(r) for r in stats) if k != (0, 0, 0)]
     evaluated_date: str | None = None
-    day_candidates: list[tuple[int, int, int]] = []
-    for fk in ("date", "v1_reference_date"):
-        dt = latest.get(fk)
-        if isinstance(dt, dict):
-            try:
-                day_candidates.append((int(dt["year"]), int(dt["month"]), int(dt["day"])))
-            except (KeyError, TypeError, ValueError):
-                continue
-    if day_candidates:
-        yy, mm, dd = max(day_candidates)
+    if day_keys:
+        yy, mm, dd = max(day_keys)
         evaluated_date = date(yy, mm, dd).isoformat()
+
+    daily_history: list[dict[str, Any]] = []
+    for row in stats[:31]:
+        d_iso = _row_date_iso(row)
+        if not d_iso:
+            continue
+        daily_history.append(
+            {
+                "date": d_iso,
+                "domain_reputation": row.get("domainReputation"),
+                "spam_rate": row.get("spamRate"),
+                "user_reported_spam_ratio": row.get("userReportedSpamRatio"),
+                "dkim_success_rate": row.get("dkimSuccessRate"),
+                "spf_success_rate": row.get("spfSuccessRate"),
+                "dmarc_success_rate": row.get("dmarcSuccessRate"),
+                "inbound_encryption_ratio": row.get("inboundEncryptionRatio"),
+                "delivery_error_rate": row.get("deliveryErrorRate"),
+            }
+        )
 
     metrics = {
         "domain_reputation": rep,
@@ -173,6 +264,9 @@ def get_domain_status_report(settings: Settings, *, domain: str) -> DomainStatus
         "dmarc_success_rate": dmarc,
         "inbound_encryption_ratio": inbound_encryption,
         "delivery_error_rate": delivery_error_rate,
+        "score_uses_worst_in_window": True,
+        "days_in_response": len(stats),
+        "daily_history": daily_history,
     }
 
     return DomainStatusReport(

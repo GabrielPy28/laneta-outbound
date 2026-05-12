@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -264,12 +265,26 @@ def _fetch_domain_stats_in_batches(
     return rows
 
 
-def _domain_stats_to_traffic_snapshot(domain: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _empty_traffic_day_row(domain: str, y: int, m: int, d: int) -> dict[str, Any]:
+    return {
+        "name": f"domains/{domain}/trafficStats/{y:04d}{m:02d}{d:02d}",
+        "date": {"year": y, "month": m, "day": d},
+        "domainReputation": None,
+        "spamRate": None,
+        "userReportedSpamRatio": None,
+        "dkimSuccessRate": None,
+        "spfSuccessRate": None,
+        "dmarcSuccessRate": None,
+        "inboundEncryptionRatio": None,
+        "deliveryErrorRate": None,
+    }
+
+
+def _domain_stats_to_daily_series(domain: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Por cada métrica v2 toma el valor del **día más reciente** donde exista dato.
-    Así DKIM/SPF no se pierden si solo aparecen en fechas distintas al spam del último día.
+    Agrupa filas v2 `domainStats` por día. Cada día queda en forma compatible con TrafficStats v1.
     """
-    best: dict[str, tuple[tuple[int, int, int], float]] = {}
+    by_day: dict[tuple[int, int, int], dict[str, float]] = defaultdict(dict)
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -285,28 +300,64 @@ def _domain_stats_to_traffic_snapshot(domain: str, rows: list[dict[str, Any]]) -
         val = _numeric_from_statistic_value(row.get("value"))
         if not name or val is None:
             continue
-        prev = best.get(name)
-        if prev is None or day_key > prev[0]:
-            best[name] = (day_key, val)
+        by_day[day_key][name] = val
 
-    if not best:
-        return {}
+    out: list[dict[str, Any]] = []
+    for day_key in sorted(by_day.keys(), reverse=True):
+        y, m, d = day_key
+        mets = by_day[day_key]
+        item = _empty_traffic_day_row(domain, y, m, d)
+        if "spam_rate" in mets:
+            item["spamRate"] = mets["spam_rate"]
+        if "dkim" in mets:
+            item["dkimSuccessRate"] = mets["dkim"]
+        if "spf" in mets:
+            item["spfSuccessRate"] = mets["spf"]
+        if "dmarc" in mets:
+            item["dmarcSuccessRate"] = mets["dmarc"]
+        if "tls_inbound" in mets:
+            item["inboundEncryptionRatio"] = mets["tls_inbound"]
+        if "delivery_error_rate" in mets:
+            item["deliveryErrorRate"] = mets["delivery_error_rate"]
+        out.append(item)
+    return out
 
-    max_day = max(t[0] for t in best.values())
-    y, m, d = max_day
-    mets = {k: v[1] for k, v in best.items()}
-    return {
-        "name": f"domains/{domain}/trafficStats/{y:04d}{m:02d}{d:02d}",
-        "date": {"year": y, "month": m, "day": d},
-        "domainReputation": None,
-        "spamRate": mets.get("spam_rate"),
-        "userReportedSpamRatio": None,
-        "dkimSuccessRate": mets.get("dkim"),
-        "spfSuccessRate": mets.get("spf"),
-        "dmarcSuccessRate": mets.get("dmarc"),
-        "inboundEncryptionRatio": mets.get("tls_inbound"),
-        "deliveryErrorRate": mets.get("delivery_error_rate"),
-    }
+
+def _apply_v1_row_to_traffic_snap(target: dict[str, Any], latest: dict[str, Any]) -> None:
+    """Rellena campos vacíos de `target` con lecturas de una fila API v1 `trafficStats`."""
+    _ratio_to_rate = (
+        ("dkimSuccessRatio", "dkimSuccessRate"),
+        ("spfSuccessRatio", "spfSuccessRate"),
+        ("dmarcSuccessRatio", "dmarcSuccessRate"),
+        ("inboundEncryptionRatio", "inboundEncryptionRatio"),
+    )
+    for src, dst in _ratio_to_rate:
+        v = latest.get(src)
+        if v is None:
+            continue
+        if target.get(dst) is None:
+            target[dst] = v
+
+    rep = latest.get("domainReputation")
+    if rep == "REPUTATION_CATEGORY_UNSPECIFIED":
+        rep = None
+    if target.get("domainReputation") is None and rep:
+        target["domainReputation"] = rep
+
+    if target.get("userReportedSpamRatio") is None and latest.get("userReportedSpamRatio") is not None:
+        target["userReportedSpamRatio"] = latest["userReportedSpamRatio"]
+
+    if target.get("spamRate") is None:
+        sr = latest.get("spamRate")
+        if sr is None:
+            sr = latest.get("spamRatio")
+        if sr is not None:
+            target["spamRate"] = sr
+
+    v1_day = _day_tuple_from_traffic_stat(latest)
+    if v1_day != (0, 0, 0):
+        vy, vm, vd = v1_day
+        target.setdefault("v1_reference_date", {"year": vy, "month": vm, "day": vd})
 
 
 def _day_tuple_from_traffic_stat(row: dict[str, Any]) -> tuple[int, int, int]:
@@ -326,31 +377,27 @@ def _day_tuple_from_traffic_stat(row: dict[str, Any]) -> tuple[int, int, int]:
     return (0, 0, 0)
 
 
-def _merge_v1_traffic_snapshot(
+def _fetch_v1_traffic_stats_rows(
     creds: Credentials,
     *,
     domain: str,
-    snap: dict[str, Any],
     start: date,
     end: date,
     page_size: int,
-) -> dict[str, Any]:
-    """
-    Postmaster UI sigue exponiendo muchos KPI en API v1 `trafficStats`.
-    Si el token tiene `postmaster.readonly`, fusionamos filas donde v2 dejó null.
-    """
+) -> list[dict[str, Any]]:
+    """Filas `trafficStats` de API v1 en el rango (requiere scope postmaster.readonly)."""
     granted = set(creds.scopes or [])
     if (
         "https://www.googleapis.com/auth/postmaster.readonly" not in granted
         and "https://www.googleapis.com/auth/postmaster" not in granted
     ):
-        return snap
+        return []
 
     parent = f"domains/{domain}"
     try:
         svc = build("gmailpostmastertools", "v1", credentials=creds, cache_discovery=False)
     except Exception:
-        return snap
+        return []
 
     rows: list[dict[str, Any]] = []
     page_token: str | None = None
@@ -380,48 +427,45 @@ def _merge_v1_traffic_snapshot(
             if not page_token:
                 break
     except HttpError:
-        return snap
+        return []
+    return rows
 
-    if not rows:
-        return snap
 
-    latest = max(rows, key=_day_tuple_from_traffic_stat)
-
-    _ratio_to_rate = (
-        ("dkimSuccessRatio", "dkimSuccessRate"),
-        ("spfSuccessRatio", "spfSuccessRate"),
-        ("dmarcSuccessRatio", "dmarcSuccessRate"),
-        ("inboundEncryptionRatio", "inboundEncryptionRatio"),
+def _merge_v1_traffic_series(
+    creds: Credentials,
+    *,
+    domain: str,
+    series: list[dict[str, Any]],
+    start: date,
+    end: date,
+    page_size: int,
+) -> list[dict[str, Any]]:
+    """
+    Postmaster UI alinea muchos KPI con API v1 `trafficStats` por día.
+    Fusiona cada fila v1 con el día correspondiente (y añade días solo-v1).
+    """
+    v1_rows = _fetch_v1_traffic_stats_rows(
+        creds, domain=domain, start=start, end=end, page_size=page_size
     )
-    for src, dst in _ratio_to_rate:
-        v = latest.get(src)
-        if v is None:
+    if not v1_rows:
+        return series
+
+    by_day: dict[tuple[int, int, int], dict[str, Any]] = {}
+    for s in series:
+        k = _day_tuple_from_traffic_stat(s)
+        if k != (0, 0, 0):
+            by_day[k] = s
+
+    for v1_row in v1_rows:
+        k = _day_tuple_from_traffic_stat(v1_row)
+        if k == (0, 0, 0):
             continue
-        if snap.get(dst) is None:
-            snap[dst] = v
+        if k not in by_day:
+            y, m, d = k
+            by_day[k] = _empty_traffic_day_row(domain, y, m, d)
+        _apply_v1_row_to_traffic_snap(by_day[k], v1_row)
 
-    rep = latest.get("domainReputation")
-    if rep == "REPUTATION_CATEGORY_UNSPECIFIED":
-        rep = None
-    if snap.get("domainReputation") is None and rep:
-        snap["domainReputation"] = rep
-
-    if snap.get("userReportedSpamRatio") is None and latest.get("userReportedSpamRatio") is not None:
-        snap["userReportedSpamRatio"] = latest["userReportedSpamRatio"]
-
-    if snap.get("spamRate") is None:
-        sr = latest.get("spamRate")
-        if sr is None:
-            sr = latest.get("spamRatio")
-        if sr is not None:
-            snap["spamRate"] = sr
-
-    v1_day = _day_tuple_from_traffic_stat(latest)
-    if v1_day != (0, 0, 0):
-        vy, vm, vd = v1_day
-        snap.setdefault("v1_reference_date", {"year": vy, "month": vm, "day": vd})
-
-    return snap
+    return sorted(by_day.values(), key=_day_tuple_from_traffic_stat, reverse=True)
 
 
 def _load_credentials(settings: Settings) -> Credentials:
@@ -499,8 +543,9 @@ def list_traffic_stats(
     page_size: int = 10,
 ) -> list[dict[str, Any]]:
     """
-    Obtiene métricas vía API **v2** `domains.domainStats.query` y devuelve una lista
-    con un único elemento en formato compatible con TrafficStats v1 para el scorer.
+    Obtiene métricas vía API **v2** `domains.domainStats.query`, agrupadas por día,
+    fusionadas con **v1** `trafficStats` cuando el token tiene `postmaster.readonly`.
+    La lista va de la fecha más reciente a la más antigua (hasta ~31 días).
     """
     creds = _load_credentials(settings)
     clean = domain.strip()
@@ -530,15 +575,12 @@ def list_traffic_stats(
             body=str(err_text)[:2000],
         ) from exc
 
-    snap = _domain_stats_to_traffic_snapshot(clean, raw_rows)
-    if not snap:
-        return []
-    snap = _merge_v1_traffic_snapshot(
+    series = _domain_stats_to_daily_series(clean, raw_rows)
+    return _merge_v1_traffic_series(
         creds,
         domain=clean,
-        snap=snap,
+        series=series,
         start=start,
         end=end,
         page_size=ps,
     )
-    return [snap]
