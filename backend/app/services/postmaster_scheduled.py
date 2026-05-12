@@ -11,10 +11,31 @@ from typing import Any
 from app.core.config import Settings, get_settings
 from app.db.session import create_session
 from app.models.postmaster_report import PostmasterReport
-from app.services.postmaster_domain_status import get_domain_status_report
+from app.services.postmaster_domain_status import (
+    PostmasterNoMetricsError,
+    get_domain_status_report,
+)
 from app.services.smtp_mail import send_plain_text_email
 
 logger = logging.getLogger(__name__)
+
+# incluido en cada payload persistido y en el correo del batch.
+POSTMASTER_REPORT_OPERATIONAL_GUIDANCE_ES = (
+    "Cómo leer este reporte\n"
+    "\n"
+    "• «Sin métricas disponibles para este dominio en Google Postmaster» suele indicar que, "
+    "en la ventana que consulta la integración (últimos 31 días), no hubo suficiente "
+    "tráfico de correo hacia Gmail como para que Google publique datos en la API. Es habitual "
+    "cuando un subdominio no envía o llevaba tiempo sin envíos hacia Gmail, y suele coincidir "
+    "con que la interfaz de Postmaster deja de mostrar datos recientes para ese dominio.\n"
+    "\n"
+    "• No equivale a fallo de infraestructura ni a una reputación medida como «mala»: es "
+    "ausencia de señal en el periodo, no un diagnóstico negativo de entregabilidad.\n"
+    "\n"
+    "• Si el parón de envíos es intencional o temporal, puede tratarse como información. "
+    "Si el dominio debería estar activo y aun así no hay datos, revisar alta y verificación "
+    "en Postmaster Tools y el volumen hacia Gmail."
+)
 
 
 def _format_metric_value(v: Any) -> str:
@@ -27,15 +48,23 @@ def _format_metric_value(v: Any) -> str:
 
 def format_postmaster_batch_email_body(payload: dict[str, Any]) -> str:
     """Genera el cuerpo del correo a partir del resultado del batch."""
+    err_n = int(payload.get("errors_count", 0) or 0)
+    no_data_n = int(payload.get("no_postmaster_data_count", 0) or 0)
     lines: list[str] = [
         "Resumen Postmaster Tools (ejecución programada)",
         "",
         f"Dominios solicitados: {payload.get('domains_requested', 0)}",
         f"Consultas exitosas: {payload.get('results_count', 0)}",
-        f"Fallos: {payload.get('errors_count', 0)}",
+        f"Fallos (requieren revisión): {err_n}",
+        f"Sin datos Postmaster (informativo): {no_data_n}",
         "",
     ]
+    guide = str(payload.get("operational_guidance_es") or "").strip()
+    if guide:
+        lines.extend(["--- Guía operativa ---", "", guide, ""])
+
     results = payload.get("results") or []
+    no_postmaster_data = payload.get("no_postmaster_data") or []
     errors = payload.get("errors") or []
 
     if results:
@@ -58,8 +87,21 @@ def format_postmaster_batch_email_body(payload: dict[str, Any]) -> str:
                     lines.append(f"    {key}: {_format_metric_value(metrics.get(key))}")
             lines.append("")
 
+    if no_postmaster_data:
+        lines.append("--- Sin datos en Postmaster (informativo) ---")
+        lines.append("")
+        for row in no_postmaster_data:
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"  {row.get('domain', '?')}: {row.get('detail', '')}")
+        lines.append(
+            "  (Suele deberse a poca o nula señal hacia Gmail en la ventana consultada, "
+            "ver Guía Operativa.)"
+        )
+        lines.append("")
+
     if errors:
-        lines.append("--- Errores ---")
+        lines.append("--- Errores (revisión) ---")
         lines.append("")
         for err in errors:
             if not isinstance(err, dict):
@@ -92,7 +134,9 @@ def format_postmaster_batch_email_html(payload: dict[str, Any]) -> str:
     domains_requested = int(payload.get("domains_requested", 0) or 0)
     results_count = int(payload.get("results_count", 0) or 0)
     errors_count = int(payload.get("errors_count", 0) or 0)
+    no_postmaster_data_count = int(payload.get("no_postmaster_data_count", 0) or 0)
     results = payload.get("results") or []
+    no_postmaster_data = payload.get("no_postmaster_data") or []
     errors = payload.get("errors") or []
 
     card_style = (
@@ -120,10 +164,23 @@ def format_postmaster_batch_email_html(payload: dict[str, Any]) -> str:
         f"<strong>Dominios solicitados:</strong> {domains_requested}</div>",
         "<div style='background:#dcfce7;padding:10px 14px;border-radius:10px;font-size:13px;'>"
         f"<strong>Consultas exitosas:</strong> {results_count}</div>",
+        "<div style='background:#ffedd5;padding:10px 14px;border-radius:10px;font-size:13px;color:#9a3412;'>"
+        f"<strong>Sin datos Postmaster:</strong> {no_postmaster_data_count}</div>",
         "<div style='background:#fee2e2;padding:10px 14px;border-radius:10px;font-size:13px;'>"
-        f"<strong>Fallos:</strong> {errors_count}</div>",
+        f"<strong>Fallos (revisión):</strong> {errors_count}</div>",
         "</div>",
     ]
+
+    guide = str(payload.get("operational_guidance_es") or "").strip()
+    if guide:
+        html_parts.append(
+            "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;"
+            "padding:14px 16px;margin-bottom:18px;font-size:13px;line-height:1.65;color:#1e3a8a;'>"
+            "<div style='font-weight:700;margin-bottom:8px;font-size:14px;'>"
+            "Guía operativa — lectura de alertas</div>"
+            f"{escape(guide).replace(chr(10), '<br>')}"
+            "</div>"
+        )
 
     if results:
         html_parts.append("<h3 style='margin:0 0 10px 0;'>Resultados por dominio</h3>")
@@ -170,8 +227,31 @@ def format_postmaster_batch_email_html(payload: dict[str, Any]) -> str:
                 html_parts.append("</tbody></table>")
             html_parts.append("</div>")
 
+    if no_postmaster_data:
+        html_parts.append(
+            "<h3 style='margin:18px 0 10px 0;color:#9a3412;'>Sin datos en Postmaster (informativo)</h3>"
+        )
+        html_parts.append(
+            "<div style='background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px;'>"
+            "<ul style='margin:0;padding-left:18px;'>"
+        )
+        for row in no_postmaster_data:
+            if not isinstance(row, dict):
+                continue
+            domain = escape(str(row.get("domain", "?")))
+            detail = escape(str(row.get("detail", "")))
+            html_parts.append(f"<li><strong>{domain}</strong>: {detail}</li>")
+        html_parts.append("</ul>")
+        html_parts.append(
+            "<p style='margin:12px 0 0 0;font-size:12px;line-height:1.55;color:#7c2d12;'>"
+            "Suele ser <strong>esperado</strong> sin envíos recientes hacia Gmail en la ventana consultada "
+            "Ver Guía Operativa."
+            "</p>"
+        )
+        html_parts.append("</div>")
+
     if errors:
-        html_parts.append("<h3 style='margin:6px 0 10px 0;color:#991b1b;'>Incidencias detectadas</h3>")
+        html_parts.append("<h3 style='margin:18px 0 10px 0;color:#991b1b;'>Errores / revisión</h3>")
         html_parts.append(
             "<div style='background:#fff1f2;border:1px solid #fecdd3;border-radius:12px;padding:12px;'>"
             "<ul style='margin:0;padding-left:18px;'>"
@@ -237,10 +317,11 @@ def run_postmaster_health_check_for_domains(
 ) -> dict[str, Any]:
     """
     Consulta `get_domain_status_report` por dominio. No aborta ante un fallo:
-    acumula errores por dominio.
+    acumula fallos reales y dominios sin datos en Postmaster por separado.
     """
     results: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    no_postmaster_data: list[dict[str, str]] = []
 
     for raw in domain_names:
         domain = str(raw).strip().lower()
@@ -250,14 +331,18 @@ def run_postmaster_health_check_for_domains(
             report = get_domain_status_report(settings, domain=domain)
             row = asdict(report)
             results.append(row)
+        except PostmasterNoMetricsError as exc:
+            logger.info("Postmaster: sin datos de serie para %s: %s", domain, exc)
+            no_postmaster_data.append({"domain": domain, "detail": str(exc)})
         except Exception as exc:
             logger.warning("Postmaster job falló para %s: %s", domain, exc)
             errors.append({"domain": domain, "error": str(exc)})
 
     logger.info(
-        "Postmaster batch: dominios=%s ok=%s errores=%s",
+        "Postmaster batch: dominios=%s ok=%s sin_datos_postmaster=%s errores=%s",
         len(domain_names),
         len(results),
+        len(no_postmaster_data),
         len(errors),
     )
     return {
@@ -265,8 +350,11 @@ def run_postmaster_health_check_for_domains(
         "domains_requested": len(domain_names),
         "results_count": len(results),
         "errors_count": len(errors),
+        "no_postmaster_data_count": len(no_postmaster_data),
         "results": results,
         "errors": errors,
+        "no_postmaster_data": no_postmaster_data,
+        "operational_guidance_es": POSTMASTER_REPORT_OPERATIONAL_GUIDANCE_ES,
     }
 
 
@@ -286,6 +374,7 @@ def run_postmaster_health_check_job() -> dict[str, Any]:
             domains_requested=int(payload.get("domains_requested", 0) or 0),
             results_count=int(payload.get("results_count", 0) or 0),
             errors_count=int(payload.get("errors_count", 0) or 0),
+            no_postmaster_data_count=int(payload.get("no_postmaster_data_count", 0) or 0),
             email_sent=bool(email_meta.get("email_sent", False)),
             email_to=str(email_meta.get("email_to") or "").strip() or None,
             email_error=str(email_meta.get("email_error") or "").strip() or None,

@@ -30,7 +30,15 @@ class PostmasterReportListItem(BaseModel):
     report_type: str = Field(description="Tipo de reporte.")
     domains_requested: int = Field(ge=0)
     results_count: int = Field(ge=0)
-    errors_count: int = Field(ge=0)
+    errors_count: int = Field(
+        ge=0,
+        description="Fallos que requieren revisión (API, configuración OAuth, dominio no en registry, etc.).",
+    )
+    no_postmaster_data_count: int = Field(
+        default=0,
+        ge=0,
+        description="Dominios sin datos en Postmaster en la ventana consultada (informativo; típico sin envíos a Gmail).",
+    )
     email_sent: bool
     email_to: str | None = None
     created_at: datetime = Field(description="Fecha ISO UTC de creación.")

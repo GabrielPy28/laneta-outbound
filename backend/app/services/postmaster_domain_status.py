@@ -10,6 +10,15 @@ from app.core.config import Settings
 from app.integrations.google_postmaster.client import GooglePostmasterError, list_traffic_stats
 
 
+class PostmasterNoMetricsError(LookupError):
+    """Google Postmaster no devolvió series en la ventana consultada (p. ej. sin tráfico suficiente hacia Gmail)."""
+
+
+POSTMASTER_NO_METRICS_MESSAGE = (
+    "Sin métricas disponibles para este dominio en Google Postmaster."
+)
+
+
 @dataclass(slots=True)
 class DomainStatusReport:
     domain: str
@@ -101,7 +110,7 @@ def get_domain_status_report(settings: Settings, *, domain: str) -> DomainStatus
 
     stats = list_traffic_stats(settings, domain=clean_domain, page_size=10)
     if not stats:
-        raise LookupError("Sin métricas disponibles para este dominio en Google Postmaster.")
+        raise PostmasterNoMetricsError(POSTMASTER_NO_METRICS_MESSAGE)
 
     def _day_key(row: dict[str, Any]) -> tuple[int, int, int]:
         dt = row.get("date")
@@ -177,4 +186,10 @@ def get_domain_status_report(settings: Settings, *, domain: str) -> DomainStatus
     )
 
 
-__all__ = ["DomainStatusReport", "GooglePostmasterError", "get_domain_status_report"]
+__all__ = [
+    "DomainStatusReport",
+    "GooglePostmasterError",
+    "POSTMASTER_NO_METRICS_MESSAGE",
+    "PostmasterNoMetricsError",
+    "get_domain_status_report",
+]

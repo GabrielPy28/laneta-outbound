@@ -26,6 +26,12 @@ class PostmasterReport(Base):
     domains_requested: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     results_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     errors_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    no_postmaster_data_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+        comment="Dominios sin series en Postmaster en la ventana (informativo; no cuenta como fallo técnico).",
+    )
     email_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     email_to: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email_error: Mapped[str | None] = mapped_column(Text, nullable=True)
